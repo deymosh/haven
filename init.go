@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"text/template"
 	"time"
 
@@ -16,6 +17,24 @@ import (
 	"github.com/fiatjaf/khatru/policies"
 	"github.com/nbd-wtf/go-nostr"
 )
+
+// getHTTPScheme returns the appropriate HTTP scheme based on the URL.
+// Returns "http://" for .onion domains (Tor), "https://" for regular domains.
+func getHTTPScheme(url string) string {
+	if strings.Contains(url, ".onion") {
+		return "http://"
+	}
+	return "https://"
+}
+
+// getWSScheme returns the appropriate WebSocket scheme based on the URL.
+// Returns "ws://" for .onion domains (Tor), "wss://" for regular domains.
+func getWSScheme(url string) string {
+	if strings.Contains(url, ".onion") {
+		return "ws://"
+	}
+	return "wss://"
+}
 
 var (
 	privateRelay = khatru.NewRelay()
@@ -111,7 +130,7 @@ func initRelays(ctx context.Context) {
 	privateRelay.Info.Icon = config.PrivateRelayIcon
 	privateRelay.Info.Version = config.RelayVersion
 	privateRelay.Info.Software = config.RelaySoftware
-	privateRelay.ServiceURL = "https://" + config.RelayURL + "/private"
+	privateRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/private"
 
 	if !privateRelayLimits.AllowEmptyFilters {
 		privateRelay.RejectFilter = append(privateRelay.RejectFilter, policies.NoEmptyFilters)
@@ -160,7 +179,7 @@ func initRelays(ctx context.Context) {
 			RelayName:        config.PrivateRelayName,
 			RelayPubkey:      nPubToPubkey(config.PrivateRelayNpub),
 			RelayDescription: config.PrivateRelayDescription,
-			RelayURL:         "wss://" + config.RelayURL + "/private",
+			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/private",
 		}
 		err := tmpl.Execute(w, data)
 		if err != nil {
@@ -174,7 +193,7 @@ func initRelays(ctx context.Context) {
 	chatRelay.Info.Icon = config.ChatRelayIcon
 	chatRelay.Info.Version = config.RelayVersion
 	chatRelay.Info.Software = config.RelaySoftware
-	chatRelay.ServiceURL = "https://" + config.RelayURL + "/chat"
+	chatRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/chat"
 
 	if !chatRelayLimits.AllowEmptyFilters {
 		chatRelay.RejectFilter = append(chatRelay.RejectFilter, policies.NoEmptyFilters)
@@ -225,7 +244,7 @@ func initRelays(ctx context.Context) {
 			RelayName:        config.ChatRelayName,
 			RelayPubkey:      nPubToPubkey(config.ChatRelayNpub),
 			RelayDescription: config.ChatRelayDescription,
-			RelayURL:         "wss://" + config.RelayURL + "/chat",
+			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/chat",
 		}
 		err := tmpl.Execute(w, data)
 		if err != nil {
@@ -239,7 +258,7 @@ func initRelays(ctx context.Context) {
 	outboxRelay.Info.Icon = config.OutboxRelayIcon
 	outboxRelay.Info.Version = config.RelayVersion
 	outboxRelay.Info.Software = config.RelaySoftware
-	outboxRelay.ServiceURL = "https://" + config.RelayURL
+	outboxRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL
 
 	if !outboxRelayLimits.AllowEmptyFilters {
 		outboxRelay.RejectFilter = append(outboxRelay.RejectFilter, policies.NoEmptyFilters)
@@ -289,7 +308,7 @@ func initRelays(ctx context.Context) {
 			RelayName:        config.OutboxRelayName,
 			RelayPubkey:      nPubToPubkey(config.OutboxRelayNpub),
 			RelayDescription: config.OutboxRelayDescription,
-			RelayURL:         "wss://" + config.RelayURL + "/outbox",
+			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/outbox",
 		}
 		err := tmpl.Execute(w, data)
 		if err != nil {
@@ -297,7 +316,7 @@ func initRelays(ctx context.Context) {
 		}
 	})
 
-	bl := blossom.New(outboxRelay, "https://"+config.RelayURL)
+	bl := blossom.New(outboxRelay, getHTTPScheme(config.RelayURL)+config.RelayURL)
 	bl.Store = blossom.EventStoreBlobIndexWrapper{Store: blossomDB, ServiceURL: bl.ServiceURL}
 	bl.StoreBlob = append(bl.StoreBlob, func(ctx context.Context, sha256 string, ext string, body []byte) error {
 		slog.Debug("storing blob", "sha256", sha256, "ext", ext)
@@ -333,7 +352,7 @@ func initRelays(ctx context.Context) {
 	inboxRelay.Info.Icon = config.InboxRelayIcon
 	inboxRelay.Info.Version = config.RelayVersion
 	inboxRelay.Info.Software = config.RelaySoftware
-	inboxRelay.ServiceURL = "https://" + config.RelayURL + "/inbox"
+	inboxRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/inbox"
 
 	if !inboxRelayLimits.AllowEmptyFilters {
 		inboxRelay.RejectFilter = append(inboxRelay.RejectFilter, policies.NoEmptyFilters)
@@ -382,7 +401,7 @@ func initRelays(ctx context.Context) {
 			RelayName:        config.InboxRelayName,
 			RelayPubkey:      nPubToPubkey(config.InboxRelayNpub),
 			RelayDescription: config.InboxRelayDescription,
-			RelayURL:         "wss://" + config.RelayURL + "/inbox",
+			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/inbox",
 		}
 		err := tmpl.Execute(w, data)
 		if err != nil {
