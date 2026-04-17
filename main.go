@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 
+	"golang.org/x/net/proxy"
 	"github.com/fiatjaf/khatru"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/afero"
@@ -22,6 +25,103 @@ var (
 	config = loadConfig()
 	fs     afero.Fs
 )
+
+// testTorConnectivity verifies that the Tor proxy is working by checking against Tor Project's official service
+func testTorConnectivity(dialer proxy.Dialer) {
+	// Create a transport with the SOCKS5 dialer
+	transport := &http.Transport{
+		Dial: dialer.Dial,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   http.DefaultClient.Timeout,
+	}
+
+	// Use the official Tor Project API to verify we're connected through Tor
+	resp, err := client.Get("https://check.torproject.org/api/ip")
+	if err != nil {
+		log.Println("⚠️ Debug: Could not verify Tor connectivity:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Parse the JSON response
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Println("⚠️ Debug: Could not parse Tor check response:", err)
+		return
+	}
+
+	// Check if the response indicates we're using Tor
+	isTor, ok := result["IsTor"].(bool)
+	if !ok {
+		log.Println("⚠️ Debug: Could not determine Tor status from response")
+		return
+	}
+
+	if isTor {
+		log.Println("✅ Successfully verified - traffic is routing through Tor network!")
+		if ip, ok := result["IP"].(string); ok {
+			log.Printf("🧅 Tor exit node IP: %s\n", ip)
+		}
+	} else {
+		log.Println("⚠️ Debug: ❌ WARNING - traffic is NOT routing through Tor")
+		if ip, ok := result["IP"].(string); ok {
+			log.Printf("⚠️ Debug: Current IP: %s\n", ip)
+		}
+	}
+}
+
+// createPoolWithProxy creates a nostr relay pool with optional SOCKS5 proxy support.
+// If PROXY_URL environment variable is set, all outgoing connections will route through the proxy.
+// This is useful for privacy-preserving setups using Tor.
+func createPoolWithProxy(ctx context.Context) *nostr.SimplePool {
+	if config.ProxyURL != "" {
+		log.Println("🔒 Proxy configured - routing ALL connections through SOCKS5:", config.ProxyURL)
+
+		// Set environment variables for Go's http package and other libraries
+		// This ensures maximum compatibility with different networking libraries
+		os.Setenv("SOCKS5", config.ProxyURL)
+
+		// Create a dialer that uses SOCKS5 for connection routing
+		dialer, err := proxy.SOCKS5("tcp", config.ProxyURL, nil, &net.Dialer{})
+		if err != nil {
+			log.Fatalf("failed to create SOCKS5 dialer: %s", err)
+		}
+
+		// Create custom transport with SOCKS5 dialer
+		transport := &http.Transport{
+			Dial: dialer.Dial,
+		}
+
+		// Set as default transport for all http clients in the program
+		// This ensures ALL outgoing HTTP/HTTPS connections use the proxy
+		http.DefaultTransport = transport
+
+		log.Println("✅ SOCKS5 proxy initialized - all outgoing connections will route through proxy")
+
+		// Debug: test Tor connectivity by making a test connection through SOCKS5
+		testTorConnectivity(dialer)
+
+		return nostr.NewSimplePool(ctx,
+			nostr.WithPenaltyBox(),
+			nostr.WithRelayOptions(
+				nostr.WithRequestHeader{
+					"User-Agent": []string{config.UserAgent},
+				}),
+		)
+	}
+
+	// Default pool without proxy
+	log.Println("No proxy configured - connections will use direct IP")
+	return nostr.NewSimplePool(ctx,
+		nostr.WithPenaltyBox(),
+		nostr.WithRelayOptions(
+			nostr.WithRequestHeader{
+				"User-Agent": []string{config.UserAgent},
+			}),
+	)
+}
 
 func main() {
 	nostr.InfoLogger = log.New(io.Discard, "", 0)
@@ -38,13 +138,7 @@ func main() {
 		log.Fatal("🚫 error creating blossom path:", err)
 	}
 
-	pool = nostr.NewSimplePool(mainCtx,
-		nostr.WithPenaltyBox(),
-		nostr.WithRelayOptions(
-			nostr.WithRequestHeader{
-				"User-Agent": []string{config.UserAgent},
-			}),
-	)
+	pool = createPoolWithProxy(mainCtx)
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {

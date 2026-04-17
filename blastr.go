@@ -31,5 +31,5 @@ func blast(ctx context.Context, ev *nostr.Event) {
 		}
 		cancel()
 	}
-	slog.Info("🔫 blasted event", "id", ev.ID, "relays", successCount)
+	slog.Info("🔫 blasted event", "id", ev.ID, "kind", ev.Kind, "relays", successCount)
 }

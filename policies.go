@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"github.com/barrydeen/haven/pkg/wot"
 	"github.com/fiatjaf/khatru"
+	"github.com/fiatjaf/khatru/policies"
 	"github.com/nbd-wtf/go-nostr"
 )
 
@@ -135,4 +138,38 @@ func MustTagWhitelistedPubKey(_ context.Context, event *nostr.Event) (bool, stri
 	slog.Debug("🚫 event rejected: event does not tag any whitelisted pubkey", "eventID", event.ID)
 
 	return true, "you can only post notes if you've tagged a whitelisted pubkey in this relay"
+}
+
+// OwnerExemptEventIPRateLimiter returns a rate limiter that exempts the owner from limits
+func OwnerExemptEventIPRateLimiter(tokensPerInterval int, interval time.Duration, maxTokens int) func(context.Context, *nostr.Event) (bool, string) {
+	baseRateLimiter := policies.EventIPRateLimiter(tokensPerInterval, interval, maxTokens)
+	
+	return func(ctx context.Context, event *nostr.Event) (bool, string) {
+		// Owner events are always allowed regardless of authentication status
+		if event.PubKey == config.OwnerPubKey {
+			return false, ""
+		}
+		
+		// Apply rate limit to other users
+		return baseRateLimiter(ctx, event)
+	}
+}
+
+// OwnerExemptConnectionRateLimiter returns a connection rate limiter that exempts the owner from limits
+func OwnerExemptConnectionRateLimiter(tokensPerInterval int, interval time.Duration, maxTokens int) func(*http.Request) bool {
+	baseRateLimiter := policies.ConnectionRateLimiter(tokensPerInterval, interval, maxTokens)
+	
+	return func(r *http.Request) bool {
+		// Check if authenticated user is the owner
+		ctx := r.Context()
+		authenticatedUser := khatru.GetAuthed(ctx)
+		
+		// If owner is authenticated, allow the connection
+		if authenticatedUser == config.OwnerPubKey {
+			return false
+		}
+		
+		// Apply rate limit to other users based on IP
+		return baseRateLimiter(r)
+	}
 }
