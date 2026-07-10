@@ -43,7 +43,7 @@ func testTorConnectivity(dialer proxy.Dialer) {
 		log.Println("⚠️ Debug: Could not verify Tor connectivity:", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Parse the JSON response
 	var result map[string]interface{}
@@ -81,7 +81,9 @@ func createPoolWithProxy(ctx context.Context) *nostr.SimplePool {
 
 		// Set environment variables for Go's http package and other libraries
 		// This ensures maximum compatibility with different networking libraries
-		os.Setenv("SOCKS5", config.ProxyURL)
+		if err := os.Setenv("SOCKS5", config.ProxyURL); err != nil {
+			log.Println("⚠️ Debug: Could not set SOCKS5 env variable:", err)
+		}
 
 		// Create a dialer that uses SOCKS5 for connection routing
 		dialer, err := proxy.SOCKS5("tcp", config.ProxyURL, nil, &net.Dialer{})
