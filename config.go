@@ -66,6 +66,7 @@ type Config struct {
 	LogLevel                             string              `json:"log_level"`
 	BlastrRelays                         []string            `json:"blastr_relays"`
 	BlastrTimeoutSeconds                 int                 `json:"blastr_timeout_seconds"`
+	ProxyURL                             string              `json:"proxy_url"`
 	S3Config                             *S3Config           `json:"s3_config"`
 }
 
@@ -118,6 +119,7 @@ func loadConfig() Config {
 		LogLevel:                             getEnvString("HAVEN_LOG_LEVEL", "INFO"),
 		BlastrRelays:                         getRelayListFromFile(getEnv("BLASTR_RELAYS_FILE")),
 		BlastrTimeoutSeconds:                 getEnvInt("BLASTR_TIMEOUT_SECONDS", 5),
+		ProxyURL:                             getEnvString("PROXY_URL", ""),
 		S3Config:                             getS3Config(),
 	}
 
@@ -166,7 +168,11 @@ func getRelayListFromFile(filePath string) []string {
 	for i, relay := range relayList {
 		relay = strings.TrimSpace(relay)
 		if !strings.HasPrefix(relay, "wss://") && !strings.HasPrefix(relay, "ws://") {
-			relay = "wss://" + relay
+			if strings.Contains(relay, ".onion") {
+				relay = "ws://" + relay
+			} else {
+				relay = "wss://" + relay
+			}
 		}
 		relayList[i] = relay
 	}
