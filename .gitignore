@@ -10,3 +10,5 @@ haven
 relays_blastr.json
 relays_import.json
 whitelisted_npubs.json
+
+tor/data/

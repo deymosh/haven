@@ -1,0 +1,44 @@
+services:
+  haven-tor:
+    image: lncm/tor:latest
+    container_name: haven-tor
+    restart: always
+    user: "root"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "grep -q 'Bootstrapped 100%' /var/lib/tor/tor.log"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./tor/torrc:/etc/tor/torrc:ro
+      - ./tor/data:/var/lib/tor
+    networks:
+      - haven-network
+
+  haven-relay:
+    image: haven-relay
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: haven-relay
+    volumes:
+      - ./db:/app/db
+      - ./blossom:/app/blossom
+      - ./relays_import.json:/app/relays_import.json:ro
+      - ./relays_blastr.json:/app/relays_blastr.json:ro
+      - ./whitelisted_npubs.json:/app/whitelisted_npubs.json:ro
+      - ./blacklisted_npubs.json:/app/blacklisted_npubs.json:ro
+    env_file:
+      - .env
+    networks:
+      - haven-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3355/outbox", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  haven-network:
+    driver: bridge

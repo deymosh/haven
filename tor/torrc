@@ -1,0 +1,7 @@
+SocksPort 0.0.0.0:9050
+DataDirectory /var/lib/tor
+Log notice stdout
+Log notice file /var/lib/tor/tor.log
+
+HiddenServiceDir /var/lib/tor/haven/
+HiddenServicePort 80 haven-relay:3355

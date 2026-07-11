@@ -1,0 +1,10 @@
+.git
+.gitignore
+.DS_Store
+db
+blossom
+.env
+.env.*
+*.log
+docs
+tor/
