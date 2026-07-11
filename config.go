@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/nbd-wtf/go-nostr/nip19"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip19"
 )
 
 type S3Config struct {
@@ -267,8 +268,6 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 func nPubToPubkey(label, nPub string) string {
 	prefix, v, err := nip19.Decode(nPub)
 	if err != nil {
-		// Only echo the raw value when it looks like an npub; a malformed
-		// non-npub (e.g. a mistyped nsec) must not be leaked into logs.
 		if strings.HasPrefix(nPub, "npub1") {
 			log.Fatalf("invalid npub for %s: %q could not be decoded (%v)", label, nPub, err)
 		}
@@ -277,11 +276,15 @@ func nPubToPubkey(label, nPub string) string {
 	if prefix != "npub" {
 		log.Fatalf("invalid npub for %s: expected an npub, got a %q", label, prefix)
 	}
-	pubkey, ok := v.(string)
-	if !ok {
+	switch value := v.(type) {
+	case string:
+		return value
+	case nostr.PubKey:
+		return value.Hex()
+	default:
 		log.Fatalf("invalid npub for %s: %q did not decode to a public key", label, nPub)
+		return ""
 	}
-	return pubkey
 }
 
 var art = `
