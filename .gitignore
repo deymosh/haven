@@ -1,14 +1,12 @@
 .DS_Store
 .env
 .idea/
-blossom/
+blossom/*
 db.zip
-db/
+db/*
 dist/
 blacklisted_npubs.json
 haven
 relays_blastr.json
 relays_import.json
 whitelisted_npubs.json
-
-tor/data/

@@ -3,7 +3,6 @@ services:
     image: lncm/tor:latest
     container_name: haven-tor
     restart: always
-    user: "root"
     healthcheck:
       test: ["CMD", "bash", "-c", "grep -q 'Bootstrapped 100%' /var/lib/tor/tor.log"]
       interval: 5s
