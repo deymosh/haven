@@ -23,10 +23,10 @@ services:
     volumes:
       - ./db:/app/db
       - ./blossom:/app/blossom
-      - ./relays_import.json:/app/relays_import.json:ro
-      - ./relays_blastr.json:/app/relays_blastr.json:ro
-      - ./whitelisted_npubs.json:/app/whitelisted_npubs.json:ro
-      - ./blacklisted_npubs.json:/app/blacklisted_npubs.json:ro
+      - ./relays_import.json:/app/relays_import.json
+      - ./relays_blastr.json:/app/relays_blastr.json
+      - ./whitelisted_npubs.json:/app/whitelisted_npubs.json
+      - ./blacklisted_npubs.json:/app/blacklisted_npubs.json
     env_file:
       - .env
     networks:
