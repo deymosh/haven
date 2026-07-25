@@ -162,6 +162,7 @@ func initRelays(ctx context.Context) {
 
 	privateRelay.UseEventstore(privateDB, 1000)
 
+	SetupManagementAPI(privateRelay)
 	mux := privateRelay.Router()
 
 	mux.HandleFunc("GET /private", func(w http.ResponseWriter, r *http.Request) {
@@ -239,6 +240,7 @@ func initRelays(ctx context.Context) {
 
 	chatRelay.UseEventstore(chatDB, 1000)
 
+	SetupManagementAPI(chatRelay)
 	mux = chatRelay.Router()
 
 	mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
@@ -308,6 +310,7 @@ func initRelays(ctx context.Context) {
 		go blast(ctx, &event)
 	}
 
+	SetupManagementAPI(outboxRelay)
 	mux = outboxRelay.Router()
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +350,8 @@ func initRelays(ctx context.Context) {
 		slog.Debug("loading blob", "sha256", sha256, "ext", ext)
 		file, err := fs.Open(config.BlossomPath + sha256)
 		if err != nil {
-			return nil, nil, err
+			file, _ = fs.Open(config.BlossomPath + "404.png")
+			return file, nil, err
 		}
 		return file, nil, nil
 	}
@@ -418,6 +422,7 @@ func initRelays(ctx context.Context) {
 
 	inboxRelay.UseEventstore(inboxDB, 1000)
 
+	SetupManagementAPI(inboxRelay)
 	mux = inboxRelay.Router()
 
 	mux.HandleFunc("GET /inbox", func(w http.ResponseWriter, r *http.Request) {

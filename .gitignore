@@ -1,9 +1,7 @@
 .DS_Store
 .env
 .idea/
-blossom/*
 db.zip
-db/*
 dist/
 blacklisted_npubs.json
 haven

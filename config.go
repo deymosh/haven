@@ -287,6 +287,15 @@ func nPubToPubkey(label, nPub string) string {
 	}
 }
 
+// pubkeyToNpub converts a hex public key string into a bech32 npub string.
+func pubkeyToNpub(hexKey string) (string, error) {
+	pub, err := nostr.PubKeyFromHex(hexKey)
+	if err != nil {
+		return "", err
+	}
+	return nip19.EncodeNpub(pub), nil
+}
+
 var art = `
 ██╗  ██╗ █████╗ ██╗   ██╗███████╗███╗   ██╗
 ██║  ██║██╔══██╗██║   ██║██╔════╝████╗  ██║
