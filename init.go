@@ -347,7 +347,8 @@ func initRelays(ctx context.Context) {
 		slog.Debug("loading blob", "sha256", sha256, "ext", ext)
 		file, err := fs.Open(config.BlossomPath + sha256)
 		if err != nil {
-			return nil, nil, err
+			file, _ = fs.Open(config.BlossomPath + "404.png")
+			return file, nil, err
 		}
 		return file, nil, nil
 	}
