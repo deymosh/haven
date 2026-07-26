@@ -21,6 +21,7 @@ services:
       dockerfile: Dockerfile
     container_name: haven-relay
     volumes:
+      - ./.env:/app/.env
       - ./db:/app/db
       - ./blossom:/app/blossom
       - ./relays_import.json:/app/relays_import.json
