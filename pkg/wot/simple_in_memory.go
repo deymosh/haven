@@ -103,7 +103,7 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 		filter.Authors = append(filter.Authors, nostr.MustPubKeyFromHex(pubkeyHex))
 	}
 
-	slog.Info("🛜 fetching Nostr events to build WoT")
+	slog.Info("🛜  fetching Nostr events to build WoT")
 
 	events := wt.Pool.FetchMany(timeoutCtx, wt.SeedRelays, filter, nostr.SubscriptionOptions{})
 	for ev := range latestEventByKindAndPubkey(timeoutCtx, events, &eventsAnalysed) {
@@ -118,13 +118,13 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 	}
 
 	if wt.WotDepth == 2 {
-		slog.Info("🕸️ analysed Nostr events", "count", eventsAnalysed.Load())
+		slog.Info("🕸️  analysed Nostr events", "count", eventsAnalysed.Load())
 		slog.Info("📈 direct followers in import relays", "🫂pubkeys", len(newWot), "🔗relays", len(wt.SeedRelays))
 		wt.pubkeys.Store(&newWot)
 		return
 	}
 
-	slog.Info("🕸️ analysing Nostr events", "count", eventsAnalysed.Load())
+	slog.Info("🕸️  analysing Nostr events", "count", eventsAnalysed.Load())
 
 	processBatch := func(pubkeys []string) {
 		timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -160,7 +160,7 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 
 		select {
 		case <-done:
-			slog.Info("🕸️ analysing Nostr events", "count", eventsAnalysed.Load())
+			slog.Info("🕸️  analysing Nostr events", "count", eventsAnalysed.Load())
 		case <-timeoutCtx.Done():
 			slog.Error("🚫 timeout while fetching events, moving to the next batch")
 		}
@@ -172,7 +172,7 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 		processBatch(batch)
 	}
 
-	slog.Info("📈 totals", "🫂pubkeys", pubkeyFollowers.Size(), "🔗relays", relaysDiscovered.Size())
+	slog.Info("📈 totals", "🫂  pubkeys", pubkeyFollowers.Size(), "🔗 relays", relaysDiscovered.Size())
 
 	// Log Top N pubkeys by follower count for debugging purposes
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
@@ -228,7 +228,7 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 		return true
 	})
 
-	slog.Info("🫥 pruned pubkeys without minimum common followers", "🚧minimum", minimumFollowers, "🫂kept", len(newWot), "🗑️eliminated", pubkeyFollowers.Size()-len(newWot))
+	slog.Info("🫥  pruned pubkeys without minimum common followers", "🚧 minimum", minimumFollowers, "🫂  kept", len(newWot), "🗑️  eliminated", pubkeyFollowers.Size()-len(newWot))
 
 	wt.pubkeys.Store(&newWot)
 }
