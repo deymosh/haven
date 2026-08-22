@@ -6,6 +6,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
+	"fiatjaf.com/nostr/eventstore"
 	"github.com/barrydeen/haven/pkg/wot"
 )
 
@@ -111,6 +112,45 @@ func EventMustBeChatRelated(_ context.Context, event *nostr.Event) (bool, string
 	}
 
 	return true, "only chat related events are allowed"
+}
+
+func EventMustNotBeFollowList(_ context.Context, event *nostr.Event) (bool, string) {
+	if event.Kind == nostr.KindFollowList {
+		return true, "blocked: follow list events are not allowed"
+	}
+	return false, ""
+}
+
+func EventMustBeLatest(_ context.Context, event *nostr.Event, db eventstore.Store) (bool, string) {
+	// if event is not replaceable or addressable kind, we don't need to check for latest
+	if !event.Kind.IsReplaceable() && !event.Kind.IsAddressable() {
+		return false, ""
+	}
+
+	// prepare filter with kind and author
+	filter := nostr.Filter{
+		Kinds:   []nostr.Kind{event.Kind},
+		Authors: []nostr.PubKey{event.PubKey},
+		Limit:   10, // could be just 1
+	}
+
+	// when addressable, add the "d" tag to the filter
+	if event.Kind.IsAddressable() {
+		filter.Tags = nostr.TagMap{"d": []string{event.Tags.GetD()}}
+	}
+
+	// query the latest events of the same kind and pubkey (and "d" tag if applicable)
+	savedEvents := db.QueryEvents(filter, filter.Limit)
+
+	// check if there is a stored event that is newer (or same precedence) than this incoming event
+	for savedEvent := range savedEvents {
+		if !nostr.IsOlder(savedEvent, *event) {
+			slog.Debug("🚫 event rejected: there is a newer event", "kind", event.Kind, "pubkey", event.PubKey)
+			return true, "replaced: there is a newer event"
+		}
+	}
+
+	return false, ""
 }
 
 func OnlyGiftWrappedDMs(_ context.Context, event *nostr.Event) (bool, string) {

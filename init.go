@@ -149,6 +149,9 @@ func initRelays(ctx context.Context) {
 		)(ctx, event); reject {
 			return reject, msg
 		}
+		if reject, msg := EventMustBeLatest(ctx, &event, privateDB); reject {
+			return reject, msg
+		}
 		return MustBeWhitelistedToPost(ctx, &event)
 	}
 
@@ -296,6 +299,9 @@ func initRelays(ctx context.Context) {
 		)(ctx, event); reject {
 			return reject, msg
 		}
+		if reject, msg := EventMustBeLatest(ctx, &event, outboxDB); reject {
+			return reject, msg
+		}
 		return MustBeWhitelistedToPost(ctx, &event)
 	}
 
@@ -403,6 +409,9 @@ func initRelays(ctx context.Context) {
 			return reject, msg
 		}
 		if reject, msg := OnlyGiftWrappedDMs(ctx, &event); reject {
+			return reject, msg
+		}
+		if reject, msg := EventMustNotBeFollowList(ctx, &event); reject {
 			return reject, msg
 		}
 		if reject, msg := MustNotBeBlacklistedToPost(ctx, &event); reject {
