@@ -35,8 +35,8 @@ func ensureImportRelays() {
 		slog.Error("🚫 Unable to connect to any import relays, check your connectivity and relays_import.json file")
 		os.Exit(1)
 	} else {
-		slog.Warn("⚠️ Some relays failed to connect, proceeding, but this may cause issues")
-		slog.Info("ℹ️ If you always see this message during startup, consider removing the relays that are not working from your relays_import.json file")
+		slog.Warn("⚠️  Some relays failed to connect, proceeding, but this may cause issues")
+		slog.Info("ℹ️  If you always see this message during startup, consider removing the relays that are not working from your relays_import.json file")
 	}
 }
 
@@ -221,12 +221,18 @@ func subscribeInboxAndChat(ctx context.Context) {
 
 	for ev := range pool.SubscribeMany(ctx, config.ImportSeedRelays, filter, nostr.SubscriptionOptions{}) {
 		if _, ok := config.BlacklistedPubKeys[ev.PubKey.Hex()]; ok {
-			slog.Debug("🚫discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+			slog.Debug("🚫 discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 			continue
 		}
 		if !wot.GetInstance().Has(ctx, ev.PubKey.Hex()) && ev.Kind != nostr.KindGiftWrap {
 			continue
 		}
+
+		// Discard follow list events since they are not relevant for the inbox or chat
+		if ev.Kind == nostr.KindFollowList {
+			continue
+		}
+
 		for tag := range ev.Tags.FindAll("p") {
 			if len(tag) < 2 {
 				continue
@@ -237,10 +243,10 @@ func subscribeInboxAndChat(ctx context.Context) {
 					dbToPublish = chatDB
 				}
 
-				slog.Debug("ℹ️ importing event", "kind", ev.Kind, "id", ev.ID, "relay", ev.Relay.URL)
+				slog.Debug("ℹ️  importing event", "kind", ev.Kind, "id", ev.ID, "relay", ev.Relay.URL)
 
 				if isDuplicate(ctx, dbToPublish, ev.Event) {
-					slog.Debug("ℹ️ skipping duplicate event", "id", ev.ID)
+					slog.Debug("ℹ️  skipping duplicate event", "id", ev.ID)
 					break // Avoid re-importing duplicates
 				}
 
@@ -262,8 +268,6 @@ func subscribeInboxAndChat(ctx context.Context) {
 					log.Println("🎁🔒️✉️ new gift-wrapped message in your chat relay")
 				case nostr.KindRepost:
 					log.Println("🔁 new repost in your inbox")
-				case nostr.KindFollowList:
-					// do nothing
 				default:
 					log.Println("📦 new event kind", ev.Kind, "event in your inbox")
 				}

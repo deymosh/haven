@@ -180,7 +180,7 @@ func runRestore(ctx context.Context) {
 func startPeriodicCloudBackups(ctx context.Context) {
 	cloudProvider, err := getCloudProvider()
 	if err != nil {
-		log.Printf("⚠️ Cloud backup disabled: %v", err)
+		log.Printf("⚠️  Cloud backup disabled: %v", err)
 		return
 	}
 
