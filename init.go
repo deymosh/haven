@@ -152,7 +152,10 @@ func initRelays(ctx context.Context) {
 		if reject, msg := EventMustBeLatest(ctx, &event, privateDB); reject {
 			return reject, msg
 		}
-		return MustBeWhitelistedToPost(ctx, &event)
+		if reject, msg := MustBeWhitelistedToPost(ctx, &event); reject {
+			return reject, msg
+		}
+		return MustNotBeDeleted(privateDB)(ctx, &event)
 	}
 
 	privateRelay.RejectConnection = policies.ConnectionRateLimiter(
@@ -164,6 +167,7 @@ func initRelays(ctx context.Context) {
 	privateRelay.OnConnect = khatru.RequestAuth
 
 	privateRelay.UseEventstore(privateDB, 1000)
+	privateRelay.AllowDeleting = OwnerCanDeleteAnyEvent
 
 	SetupManagementAPI(privateRelay)
 	mux := privateRelay.Router()
@@ -230,7 +234,10 @@ func initRelays(ctx context.Context) {
 		if reject, msg := MustBeInWotToPost(ctx, &event); reject {
 			return reject, msg
 		}
-		return EventMustBeChatRelated(ctx, &event)
+		if reject, msg := EventMustBeChatRelated(ctx, &event); reject {
+			return reject, msg
+		}
+		return MustNotBeDeleted(chatDB)(ctx, &event)
 	}
 
 	chatRelay.RejectConnection = policies.ConnectionRateLimiter(
@@ -242,6 +249,7 @@ func initRelays(ctx context.Context) {
 	chatRelay.OnConnect = khatru.RequestAuth
 
 	chatRelay.UseEventstore(chatDB, 1000)
+	chatRelay.AllowDeleting = OwnerCanDeleteAnyEvent
 
 	SetupManagementAPI(chatRelay)
 	mux = chatRelay.Router()
@@ -302,7 +310,10 @@ func initRelays(ctx context.Context) {
 		if reject, msg := EventMustBeLatest(ctx, &event, outboxDB); reject {
 			return reject, msg
 		}
-		return MustBeWhitelistedToPost(ctx, &event)
+		if reject, msg := MustBeWhitelistedToPost(ctx, &event); reject {
+			return reject, msg
+		}
+		return MustNotBeDeleted(outboxDB)(ctx, &event)
 	}
 
 	outboxRelay.RejectConnection = policies.ConnectionRateLimiter(
@@ -312,6 +323,7 @@ func initRelays(ctx context.Context) {
 	)
 
 	outboxRelay.UseEventstore(outboxDB, 1000)
+	outboxRelay.AllowDeleting = OwnerCanDeleteAnyEvent
 	outboxRelay.OnEventSaved = func(ctx context.Context, event nostr.Event) {
 		go blast(ctx, &event)
 	}
@@ -420,7 +432,10 @@ func initRelays(ctx context.Context) {
 		if reject, msg := MustBeInWotToPost(ctx, &event); reject {
 			return reject, msg
 		}
-		return MustTagWhitelistedPubKey(ctx, &event)
+		if reject, msg := MustTagWhitelistedPubKey(ctx, &event); reject {
+			return reject, msg
+		}
+		return MustNotBeDeleted(inboxDB)(ctx, &event)
 	}
 
 	inboxRelay.RejectConnection = policies.ConnectionRateLimiter(
@@ -430,6 +445,7 @@ func initRelays(ctx context.Context) {
 	)
 
 	inboxRelay.UseEventstore(inboxDB, 1000)
+	inboxRelay.AllowDeleting = OwnerCanDeleteAnyEvent
 
 	SetupManagementAPI(inboxRelay)
 	mux = inboxRelay.Router()

@@ -60,7 +60,29 @@ func MustBeInWotToPost(ctx context.Context, event *nostr.Event) (bool, string) {
 	return false, ""
 }
 
+// isBanned reports whether a pubkey is banned. With the management API in
+// place this becomes the union of the npubs file, the owner's kind 10084
+// list and whatever was banned over NIP-86; every rule that enforces a ban
+// reads it through here.
+func isBanned(pubKey string) bool {
+	_, ok := config.BlacklistedPubKeys[pubKey]
+	return ok
+}
+
+// isOwnerDeleteRequest reports whether the event is a NIP-09 delete request from
+// the relay owner. Signatures are verified before any policy runs, so the pubkey
+// on the event is proof enough that the owner sent it.
+func isOwnerDeleteRequest(event *nostr.Event) bool {
+	return event.Kind == nostr.KindDeletion && event.PubKey.Hex() == config.OwnerPubKey
+}
+
 func MustNotBeBlacklistedToPost(ctx context.Context, event *nostr.Event) (bool, string) {
+	// The owner's delete requests carry the owner's signature, so there is nothing
+	// left for an AUTH round trip to prove
+	if isOwnerDeleteRequest(event) {
+		return false, ""
+	}
+
 	// Events from a blacklisted pubkey ARE always rejected
 	if _, ok := config.BlacklistedPubKeys[event.PubKey.Hex()]; ok {
 		slog.Debug("🚫 event rejected: event author is blacklisted", "event", event.ID, "pubkey", event.PubKey)
@@ -107,6 +129,11 @@ var allowedChatKinds = map[nostr.Kind]struct{}{
 }
 
 func EventMustBeChatRelated(_ context.Context, event *nostr.Event) (bool, string) {
+	// the owner's delete requests are stored so the deletion survives a re-publish
+	if isOwnerDeleteRequest(event) {
+		return false, ""
+	}
+
 	if _, ok := allowedChatKinds[event.Kind]; ok {
 		return false, ""
 	}
@@ -161,6 +188,11 @@ func OnlyGiftWrappedDMs(_ context.Context, event *nostr.Event) (bool, string) {
 }
 
 func MustTagWhitelistedPubKey(_ context.Context, event *nostr.Event) (bool, string) {
+	// the owner's delete requests are stored so the deletion survives a re-publish
+	if isOwnerDeleteRequest(event) {
+		return false, ""
+	}
+
 	// User must tag at least one whitelisted pubkey in this relay
 	tags := event.Tags.FindAll("p")
 	for tag := range tags {
@@ -175,4 +207,16 @@ func MustTagWhitelistedPubKey(_ context.Context, event *nostr.Event) (bool, stri
 	slog.Debug("🚫 event rejected: event does not tag any whitelisted pubkey", "eventID", event.ID)
 
 	return true, "you can only post notes if you've tagged a whitelisted pubkey in this relay"
+}
+
+// MustNotBeDeleted rejects events that have already been deleted from db, so a
+// re-publish can't resurrect what the owner or the author deleted.
+func MustNotBeDeleted(db DBBackend) func(context.Context, *nostr.Event) (bool, string) {
+	return func(_ context.Context, event *nostr.Event) (bool, string) {
+		if isDeleted(db, *event) {
+			slog.Debug("🚫 event rejected: event has been deleted", "event", event.ID, "pubkey", event.PubKey)
+			return true, "this event has been deleted"
+		}
+		return false, ""
+	}
 }

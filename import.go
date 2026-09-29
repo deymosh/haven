@@ -110,6 +110,10 @@ func importOwnerNotes(ctx context.Context) {
 					slog.Debug("🚫 skipping event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 					continue
 				}
+				if isDeleted(outboxDB, ev.Event) {
+					slog.Debug("🚫 skipping deleted event", "id", ev.ID)
+					continue
+				}
 				if err := outboxDB.SaveEvent(ev.Event); err != nil {
 					log.Println("🚫  error importing note", ev.ID, ":", err)
 					nFailedImportNotes++
@@ -188,6 +192,10 @@ func importTaggedNotes(ctx context.Context) {
 					if ev.Kind == nostr.KindGiftWrap {
 						dbToWrite = chatStore
 					}
+					if isDeleted(dbToWrite, ev.Event) {
+						slog.Debug("🚫 skipping deleted tagged event", "id", ev.ID)
+						break
+					}
 					if err := dbToWrite.SaveEvent(ev.Event); err != nil {
 						log.Println("🚫 error importing tagged note", ev.ID, ":", err)
 					}
@@ -241,6 +249,11 @@ func subscribeInboxAndChat(ctx context.Context) {
 				dbToPublish := inboxDB
 				if ev.Kind == nostr.KindGiftWrap {
 					dbToPublish = chatDB
+				}
+
+				if isDeleted(dbToPublish, ev.Event) {
+					slog.Debug("🚫 skipping deleted event", "id", ev.ID)
+					break // Deleted events must not come back
 				}
 
 				slog.Debug("ℹ️  importing event", "kind", ev.Kind, "id", ev.ID, "relay", ev.Relay.URL)
