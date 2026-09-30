@@ -26,7 +26,7 @@ import (
 //   - A fifth lmdb environment would reserve another 256GiB of address space for
 //     a quarter of a megabyte of counters, and would fail outright on 32-bit.
 //   - eventstore is an *event* store. Keeping a time series in it would mean
-//     synthesising unsigned events and inheriting every trap eventscan.go exists
+//     synthesising unsigned events and inheriting every trap events_scan.go exists
 //     to work around, for no benefit.
 //   - The operator already knows management.json. metrics.json sits beside it
 //     under the same rules.
