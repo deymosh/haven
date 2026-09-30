@@ -83,9 +83,16 @@ func createPoolWithProxy(ctx context.Context) *nostr.Pool {
 			log.Fatalf("failed to create SOCKS5 dialer: %s", err)
 		}
 
+		// the SOCKS5 dialer from x/net supports contexts, so a dial can be
+		// cancelled along with the request that asked for it
+		contextDialer, ok := dialer.(proxy.ContextDialer)
+		if !ok {
+			log.Fatalf("SOCKS5 dialer does not support contexts")
+		}
+
 		// Create custom transport with SOCKS5 dialer
 		transport := &http.Transport{
-			Dial: dialer.Dial,
+			DialContext: contextDialer.DialContext,
 		}
 
 		// Set as default transport for all http clients in the program
