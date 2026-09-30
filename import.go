@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"maps"
 	"os"
-	"slices"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -53,9 +51,10 @@ func runImport(ctx context.Context) {
 	}
 
 	initDBs()
+	loadBanList()
 	wotModel := wot.NewSimpleInMemory(
 		pool,
-		config.WhitelistedPubKeys,
+		whitelistedPubKeySet,
 		config.ImportSeedRelays,
 		config.WotDepth,
 		config.WotMinimumFollowers,
@@ -82,8 +81,9 @@ func importOwnerNotes(ctx context.Context) {
 	for {
 		startTimestamp := nostr.Timestamp(startTime.Unix())
 		endTimestamp := nostr.Timestamp(endTime.Unix())
-		authors := make([]nostr.PubKey, 0, len(config.WhitelistedPubKeys))
-		for pubkeyHex := range config.WhitelistedPubKeys {
+		allowed := whitelistedPubKeySet()
+		authors := make([]nostr.PubKey, 0, len(allowed))
+		for pubkeyHex := range allowed {
 			authors = append(authors, nostr.MustPubKeyFromHex(pubkeyHex))
 		}
 
@@ -108,6 +108,18 @@ func importOwnerNotes(ctx context.Context) {
 				}
 				if _, ok := config.BlacklistedPubKeys[ev.PubKey.Hex()]; ok {
 					slog.Debug("🚫 skipping event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+					continue
+				}
+				if isBanned(ev.PubKey.Hex()) {
+					slog.Debug("🚫 skipping event from banned pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+					continue
+				}
+				if isBannedEvent(relayOutbox, ev.ID.Hex()) {
+					slog.Debug("🚫 skipping banned event", "id", ev.ID)
+					continue
+				}
+				if isDeleted(outboxDB, ev.Event) {
+					slog.Debug("🚫 skipping deleted event", "id", ev.ID)
 					continue
 				}
 				if err := outboxDB.SaveEvent(ev.Event); err != nil {
@@ -158,7 +170,7 @@ func importTaggedNotes(ctx context.Context) {
 	chatStore := chatDB
 	filter := nostr.Filter{
 		Tags: nostr.TagMap{
-			"p": slices.Collect(maps.Keys(config.WhitelistedPubKeys)),
+			"p": whitelistedPubKeys(),
 		},
 	}
 
@@ -176,6 +188,11 @@ func importTaggedNotes(ctx context.Context) {
 				continue
 			}
 
+			if isBanned(ev.PubKey.Hex()) {
+				slog.Debug("🚫 skipping tagged event from banned pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+				continue
+			}
+
 			if !wot.GetInstance().Has(ctx, ev.PubKey.Hex()) && ev.Kind != nostr.KindGiftWrap {
 				continue
 			}
@@ -183,10 +200,20 @@ func importTaggedNotes(ctx context.Context) {
 				if len(tag) < 2 {
 					continue
 				}
-				if _, ok := config.WhitelistedPubKeys[tag[1]]; ok {
+				if isWhitelisted(tag[1]) {
 					dbToWrite := inboxStore
+					relayToCheck := relayInbox
 					if ev.Kind == nostr.KindGiftWrap {
 						dbToWrite = chatStore
+						relayToCheck = relayChat
+					}
+					if isBannedEvent(relayToCheck, ev.ID.Hex()) {
+						slog.Debug("🚫 skipping banned tagged event", "id", ev.ID)
+						break
+					}
+					if isDeleted(dbToWrite, ev.Event) {
+						slog.Debug("🚫 skipping deleted tagged event", "id", ev.ID)
+						break
 					}
 					if err := dbToWrite.SaveEvent(ev.Event); err != nil {
 						log.Println("🚫 error importing tagged note", ev.ID, ":", err)
@@ -212,7 +239,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 	startTime := nostr.Timestamp(time.Now().Add(-time.Minute * 5).Unix())
 	filter := nostr.Filter{
 		Tags: nostr.TagMap{
-			"p": slices.Collect(maps.Keys(config.WhitelistedPubKeys)),
+			"p": whitelistedPubKeys(),
 		},
 		Since: startTime,
 	}
@@ -222,6 +249,10 @@ func subscribeInboxAndChat(ctx context.Context) {
 	for ev := range pool.SubscribeMany(ctx, config.ImportSeedRelays, filter, nostr.SubscriptionOptions{}) {
 		if _, ok := config.BlacklistedPubKeys[ev.PubKey.Hex()]; ok {
 			slog.Debug("🚫 discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+			continue
+		}
+		if isBanned(ev.PubKey.Hex()) {
+			slog.Debug("🚫 discarding imported note from banned pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 			continue
 		}
 		if !wot.GetInstance().Has(ctx, ev.PubKey.Hex()) && ev.Kind != nostr.KindGiftWrap {
@@ -237,20 +268,32 @@ func subscribeInboxAndChat(ctx context.Context) {
 			if len(tag) < 2 {
 				continue
 			}
-			if _, ok := config.WhitelistedPubKeys[tag[1]]; ok {
-				dbToPublish := inboxDB
+			if isWhitelisted(tag[1]) {
+				db := inboxDB
+				relayToCheck := relayInbox
 				if ev.Kind == nostr.KindGiftWrap {
-					dbToPublish = chatDB
+					db = chatDB
+					relayToCheck = relayChat
+				}
+
+				if isBannedEvent(relayToCheck, ev.ID.Hex()) {
+					slog.Debug("🚫 discarding banned event", "id", ev.ID)
+					break
 				}
 
 				slog.Debug("ℹ️  importing event", "kind", ev.Kind, "id", ev.ID, "relay", ev.Relay.URL)
 
-				if isDuplicate(ctx, dbToPublish, ev.Event) {
+				if isDeleted(db, ev.Event) {
+					slog.Debug("🚫 skipping deleted event", "id", ev.ID)
+					break // Deleted events must not come back
+				}
+
+				if isDuplicate(ctx, db, ev.Event) {
 					slog.Debug("ℹ️  skipping duplicate event", "id", ev.ID)
 					break // Avoid re-importing duplicates
 				}
 
-				if err := dbToPublish.SaveEvent(ev.Event); err != nil {
+				if err := db.SaveEvent(ev.Event); err != nil {
 					log.Println("🚫 error importing tagged note", ev.ID, ":", "from relay", ev.Relay.URL, ":", err)
 					break
 				}

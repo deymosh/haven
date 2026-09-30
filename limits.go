@@ -12,7 +12,9 @@ var (
 	outboxRelayLimits  OutboxRelayLimits
 )
 
-type PrivateRelayLimits struct {
+// RelayLimits is one relay's rate limits and filter rules. All four relays
+// take the same set, so they share the type.
+type RelayLimits struct {
 	EventIPLimiterTokensPerInterval        int
 	EventIPLimiterInterval                 int
 	EventIPLimiterMaxTokens                int
@@ -23,38 +25,12 @@ type PrivateRelayLimits struct {
 	ConnectionRateLimiterMaxTokens         int
 }
 
-type ChatRelayLimits struct {
-	EventIPLimiterTokensPerInterval        int
-	EventIPLimiterInterval                 int
-	EventIPLimiterMaxTokens                int
-	AllowEmptyFilters                      bool
-	AllowComplexFilters                    bool
-	ConnectionRateLimiterTokensPerInterval int
-	ConnectionRateLimiterInterval          int
-	ConnectionRateLimiterMaxTokens         int
-}
-
-type InboxRelayLimits struct {
-	EventIPLimiterTokensPerInterval        int
-	EventIPLimiterInterval                 int
-	EventIPLimiterMaxTokens                int
-	AllowEmptyFilters                      bool
-	AllowComplexFilters                    bool
-	ConnectionRateLimiterTokensPerInterval int
-	ConnectionRateLimiterInterval          int
-	ConnectionRateLimiterMaxTokens         int
-}
-
-type OutboxRelayLimits struct {
-	EventIPLimiterTokensPerInterval        int
-	EventIPLimiterInterval                 int
-	EventIPLimiterMaxTokens                int
-	AllowEmptyFilters                      bool
-	AllowComplexFilters                    bool
-	ConnectionRateLimiterTokensPerInterval int
-	ConnectionRateLimiterInterval          int
-	ConnectionRateLimiterMaxTokens         int
-}
+type (
+	PrivateRelayLimits = RelayLimits
+	ChatRelayLimits    = RelayLimits
+	InboxRelayLimits   = RelayLimits
+	OutboxRelayLimits  = RelayLimits
+)
 
 func initRelayLimits() {
 	privateRelayLimits = PrivateRelayLimits{

@@ -3,12 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
-	"text/template"
+	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -37,6 +38,163 @@ func getWSScheme(url string) string {
 	return "wss://"
 }
 
+// indexTemplate parses the relay landing page once, instead of on every
+// request. It is html/template rather than text/template: the name and
+// description it renders can be changed through the management API, so
+// escaping them stops being optional.
+var indexTemplate = sync.OnceValues(func() (*template.Template, error) {
+	return template.ParseFiles("templates/index.html")
+})
+
+// relayIndexHandler serves one relay's landing page. name and description are
+// the .env values; whatever the owner set over the management API wins.
+func relayIndexHandler(relay, pubKey, name, description, wsURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		tmpl, err := indexTemplate()
+		if err != nil {
+			slog.Error("🚫 error parsing the relay landing page", "error", err)
+			http.Error(w, "the relay landing page is unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		effectiveName, effectiveDescription, _ := effectiveRelayInfo(relay, name, description, "")
+		data := struct {
+			RelayName        string
+			RelayPubkey      string
+			RelayDescription string
+			RelayURL         string
+		}{
+			RelayName:        effectiveName,
+			RelayPubkey:      pubKey,
+			RelayDescription: effectiveDescription,
+			RelayURL:         wsURL,
+		}
+
+		// rendered whole before anything is written, so a failure halfway
+		// through can still be reported as an error instead of a torn page
+		var page bytes.Buffer
+		if err := tmpl.Execute(&page, data); err != nil {
+			slog.Error("🚫 error rendering the relay landing page", "relay", relay, "error", err)
+			http.Error(w, "the relay landing page is unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := w.Write(page.Bytes()); err != nil {
+			slog.Debug("🚫 error writing the relay landing page", "error", err)
+		}
+	}
+}
+
+//
+// policy composition
+//
+// The monorepo khatru has one function per hook. These build that function
+// out of an ordered list of policies, stopping at the first rejection, so each
+// relay's rules read as a list again.
+//
+
+type eventPolicy = func(context.Context, *nostr.Event) (bool, string)
+type filterPolicy = func(context.Context, nostr.Filter) (bool, string)
+type connectionPolicy = func(*http.Request) bool
+
+func chainEventPolicies(ps ...eventPolicy) func(context.Context, nostr.Event) (bool, string) {
+	return func(ctx context.Context, event nostr.Event) (bool, string) {
+		for _, p := range ps {
+			if reject, msg := p(ctx, &event); reject {
+				return reject, msg
+			}
+		}
+		return false, ""
+	}
+}
+
+func chainFilterPolicies(ps ...filterPolicy) filterPolicy {
+	return func(ctx context.Context, filter nostr.Filter) (bool, string) {
+		for _, p := range ps {
+			if reject, msg := p(ctx, filter); reject {
+				return reject, msg
+			}
+		}
+		return false, ""
+	}
+}
+
+func chainConnectionPolicies(ps ...connectionPolicy) connectionPolicy {
+	return func(r *http.Request) bool {
+		for _, p := range ps {
+			if p(r) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// byValue adapts one of khatru's own event policies, which take the event by
+// value, to the pointer form haven's policies use.
+func byValue(p func(context.Context, nostr.Event) (bool, string)) eventPolicy {
+	return func(ctx context.Context, event *nostr.Event) (bool, string) {
+		return p(ctx, *event)
+	}
+}
+
+// baseFilterPolicies are the filter-shape limits every relay applies.
+func baseFilterPolicies(limits RelayLimits) []filterPolicy {
+	var ps []filterPolicy
+	if !limits.AllowEmptyFilters {
+		ps = append(ps, policies.NoEmptyFilters)
+	}
+	if !limits.AllowComplexFilters {
+		ps = append(ps, policies.NoComplexFilters)
+	}
+	return ps
+}
+
+// basePolicies are the checks every relay runs on an event before its own
+// rules. The rate limiter is built here, once per relay: built inside the
+// hook, as it used to be, it was a fresh token bucket for every event and so
+// never limited anything.
+func basePolicies(relay string, limits RelayLimits) []eventPolicy {
+	return []eventPolicy{
+		MustNotBeBannedToPost,
+		MustNotBeABannedEvent(relay),
+		MustBeAnAllowedKind(relay),
+		byValue(policies.RejectEventsWithBase64Media),
+		byValue(policies.EventIPRateLimiter(
+			limits.EventIPLimiterTokensPerInterval,
+			time.Minute*time.Duration(limits.EventIPLimiterInterval),
+			limits.EventIPLimiterMaxTokens,
+		)),
+	}
+}
+
+func connectionPolicies(limits RelayLimits) connectionPolicy {
+	return chainConnectionPolicies(
+		MustNotBeIPBlocked,
+		policies.ConnectionRateLimiter(
+			limits.ConnectionRateLimiterTokensPerInterval,
+			time.Minute*time.Duration(limits.ConnectionRateLimiterInterval),
+			limits.ConnectionRateLimiterMaxTokens,
+		),
+	)
+}
+
+// setupRelayInfo fills in the NIP-11 fields every relay shares and returns the
+// relay's pubkey as hex for its landing page.
+func setupRelayInfo(relay *khatru.Relay, name, label, npub, description, icon, path string) string {
+	pubKey := nostr.MustPubKeyFromHex(nPubToPubkey(label, npub))
+	relay.Info.Name = name
+	relay.Info.PubKey = &pubKey
+	relay.Info.Description = description
+	relay.Info.Icon = icon
+	relay.Info.Version = config.RelayVersion
+	relay.Info.Software = config.RelaySoftware
+	relay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + path
+	return pubKey.Hex()
+}
+
 var (
 	privateRelay = khatru.NewRelay()
 	privateDB    = newDBBackend("db/private")
@@ -60,11 +218,11 @@ var (
 var blossomDB = newDBBackend("db/blossom")
 
 var dbs = map[string]DBBackend{
-	"blossom": blossomDB,
-	"chat":    chatDB,
-	"inbox":   inboxDB,
-	"outbox":  outboxDB,
-	"private": privateDB,
+	"blossom":    blossomDB,
+	relayChat:    chatDB,
+	relayInbox:   inboxDB,
+	relayOutbox:  outboxDB,
+	relayPrivate: privateDB,
 }
 
 type DBBackend = eventstore.Store
@@ -86,371 +244,186 @@ func newLMDBBackend(path string) *lmdb.LMDBBackend {
 }
 
 func initDBs() {
-	if err := privateDB.Init(); err != nil {
-		panic(err)
-	}
-
-	if err := chatDB.Init(); err != nil {
-		panic(err)
-	}
-
-	if err := outboxDB.Init(); err != nil {
-		panic(err)
-	}
-
-	if err := inboxDB.Init(); err != nil {
-		panic(err)
-	}
-
-	if err := blossomDB.Init(); err != nil {
-		panic(err)
+	for _, db := range []DBBackend{privateDB, chatDB, outboxDB, inboxDB, blossomDB} {
+		if err := db.Init(); err != nil {
+			panic(err)
+		}
 	}
 }
 
 func initRelays(ctx context.Context) {
 	initDBs()
 
+	loadBanList()
+
 	initRelayLimits()
 
-	privateRelay.Info.Name = config.PrivateRelayName
-	privatePrivatePubKey := nostr.MustPubKeyFromHex(nPubToPubkey("PRIVATE_RELAY_NPUB", config.PrivateRelayNpub))
-	privateRelay.Info.PubKey = &privatePrivatePubKey
-	privateRelay.Info.Description = config.PrivateRelayDescription
-	privateRelay.Info.Icon = config.PrivateRelayIcon
-	privateRelay.Info.Version = config.RelayVersion
-	privateRelay.Info.Software = config.RelaySoftware
-	privateRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/private"
+	// private
+	privatePubKey := setupRelayInfo(privateRelay, config.PrivateRelayName, "PRIVATE_RELAY_NPUB", config.PrivateRelayNpub,
+		config.PrivateRelayDescription, config.PrivateRelayIcon, "/private")
 
-	privateRelay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if !privateRelayLimits.AllowEmptyFilters {
-			if reject, msg := policies.NoEmptyFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if !privateRelayLimits.AllowComplexFilters {
-			if reject, msg := policies.NoComplexFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if reject, msg := policies.MustAuth(ctx, filter); reject {
-			return reject, msg
-		}
-		return MustBeWhitelistedToQuery(ctx, filter)
-	}
-
-	privateRelay.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
-		if reject, msg := policies.RejectEventsWithBase64Media(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := policies.EventIPRateLimiter(
-			privateRelayLimits.EventIPLimiterTokensPerInterval,
-			time.Minute*time.Duration(privateRelayLimits.EventIPLimiterInterval),
-			privateRelayLimits.EventIPLimiterMaxTokens,
-		)(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := EventMustBeLatest(ctx, &event, privateDB); reject {
-			return reject, msg
-		}
-		return MustBeWhitelistedToPost(ctx, &event)
-	}
-
-	privateRelay.RejectConnection = policies.ConnectionRateLimiter(
-		privateRelayLimits.ConnectionRateLimiterTokensPerInterval,
-		time.Minute*time.Duration(privateRelayLimits.ConnectionRateLimiterInterval),
-		privateRelayLimits.ConnectionRateLimiterMaxTokens,
-	)
-
+	privateRelay.OnRequest = chainFilterPolicies(append(baseFilterPolicies(privateRelayLimits),
+		policies.MustAuth,
+		MustBeWhitelistedToQuery,
+	)...)
+	privateRelay.OnEvent = chainEventPolicies(append(basePolicies(relayPrivate, privateRelayLimits),
+		func(ctx context.Context, event *nostr.Event) (bool, string) {
+			return EventMustBeLatest(ctx, event, privateDB)
+		},
+		MustBeWhitelistedToPost,
+		MustNotBeDeleted(privateDB),
+	)...)
+	privateRelay.RejectConnection = connectionPolicies(privateRelayLimits)
 	privateRelay.OnConnect = khatru.RequestAuth
-
 	privateRelay.UseEventstore(privateDB, 1000)
+	privateRelay.AllowDeleting = OwnerCanDeleteAnyEvent
+	privateRelay.OverwriteRelayInformation = OverwriteRelayInfo(relayPrivate)
+	instrument(privateRelay, relayPrivate)
 
-	SetupManagementAPI(privateRelay)
-	mux := privateRelay.Router()
+	privateRelay.Router().HandleFunc("GET /private", relayIndexHandler(
+		relayPrivate, privatePubKey, config.PrivateRelayName, config.PrivateRelayDescription,
+		getWSScheme(config.RelayURL)+config.RelayURL+"/private",
+	))
 
-	mux.HandleFunc("GET /private", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
-		data := struct {
-			RelayName        string
-			RelayPubkey      string
-			RelayDescription string
-			RelayURL         string
-		}{
-			RelayName:        config.PrivateRelayName,
-			RelayPubkey:      nPubToPubkey("PRIVATE_RELAY_NPUB", config.PrivateRelayNpub),
-			RelayDescription: config.PrivateRelayDescription,
-			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/private",
-		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
+	// chat
+	chatPubKey := setupRelayInfo(chatRelay, config.ChatRelayName, "CHAT_RELAY_NPUB", config.ChatRelayNpub,
+		config.ChatRelayDescription, config.ChatRelayIcon, "/chat")
 
-	chatRelay.Info.Name = config.ChatRelayName
-	chatPrivatePubKey := nostr.MustPubKeyFromHex(nPubToPubkey("CHAT_RELAY_NPUB", config.ChatRelayNpub))
-	chatRelay.Info.PubKey = &chatPrivatePubKey
-	chatRelay.Info.Description = config.ChatRelayDescription
-	chatRelay.Info.Icon = config.ChatRelayIcon
-	chatRelay.Info.Version = config.RelayVersion
-	chatRelay.Info.Software = config.RelaySoftware
-	chatRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/chat"
-
-	chatRelay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if !chatRelayLimits.AllowEmptyFilters {
-			if reject, msg := policies.NoEmptyFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if !chatRelayLimits.AllowComplexFilters {
-			if reject, msg := policies.NoComplexFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if reject, msg := policies.MustAuth(ctx, filter); reject {
-			return reject, msg
-		}
-		return MustBeInWotToQuery(ctx, filter)
-	}
-
-	chatRelay.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
-		if reject, msg := policies.RejectEventsWithBase64Media(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := policies.EventIPRateLimiter(
-			chatRelayLimits.EventIPLimiterTokensPerInterval,
-			time.Minute*time.Duration(chatRelayLimits.EventIPLimiterInterval),
-			chatRelayLimits.EventIPLimiterMaxTokens,
-		)(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := MustNotBeBlacklistedToPost(ctx, &event); reject {
-			return reject, msg
-		}
-		if reject, msg := MustBeInWotToPost(ctx, &event); reject {
-			return reject, msg
-		}
-		return EventMustBeChatRelated(ctx, &event)
-	}
-
-	chatRelay.RejectConnection = policies.ConnectionRateLimiter(
-		chatRelayLimits.ConnectionRateLimiterTokensPerInterval,
-		time.Minute*time.Duration(chatRelayLimits.ConnectionRateLimiterInterval),
-		chatRelayLimits.ConnectionRateLimiterMaxTokens,
-	)
-
+	chatRelay.OnRequest = chainFilterPolicies(append(baseFilterPolicies(chatRelayLimits),
+		policies.MustAuth,
+		MustBeInWotToQuery,
+	)...)
+	chatRelay.OnEvent = chainEventPolicies(append(basePolicies(relayChat, chatRelayLimits),
+		MustNotBeBlacklistedToPost,
+		MustBeInWotToPost,
+		EventMustBeChatRelated,
+		MustNotBeDeleted(chatDB),
+	)...)
+	chatRelay.RejectConnection = connectionPolicies(chatRelayLimits)
 	chatRelay.OnConnect = khatru.RequestAuth
-
 	chatRelay.UseEventstore(chatDB, 1000)
+	chatRelay.AllowDeleting = OwnerCanDeleteAnyEvent
+	chatRelay.OverwriteRelayInformation = OverwriteRelayInfo(relayChat)
+	instrument(chatRelay, relayChat)
 
-	SetupManagementAPI(chatRelay)
-	mux = chatRelay.Router()
+	chatRelay.Router().HandleFunc("GET /chat", relayIndexHandler(
+		relayChat, chatPubKey, config.ChatRelayName, config.ChatRelayDescription,
+		getWSScheme(config.RelayURL)+config.RelayURL+"/chat",
+	))
 
-	mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
-		data := struct {
-			RelayName        string
-			RelayPubkey      string
-			RelayDescription string
-			RelayURL         string
-		}{
-			RelayName:        config.ChatRelayName,
-			RelayPubkey:      nPubToPubkey("CHAT_RELAY_NPUB", config.ChatRelayNpub),
-			RelayDescription: config.ChatRelayDescription,
-			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/chat",
-		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
+	// outbox
+	outboxPubKey := setupRelayInfo(outboxRelay, config.OutboxRelayName, "OUTBOX_RELAY_NPUB", config.OutboxRelayNpub,
+		config.OutboxRelayDescription, config.OutboxRelayIcon, "")
 
-	outboxRelay.Info.Name = config.OutboxRelayName
-	outboxOutboxPubKey := nostr.MustPubKeyFromHex(nPubToPubkey("OUTBOX_RELAY_NPUB", config.OutboxRelayNpub))
-	outboxRelay.Info.PubKey = &outboxOutboxPubKey
-	outboxRelay.Info.Description = config.OutboxRelayDescription
-	outboxRelay.Info.Icon = config.OutboxRelayIcon
-	outboxRelay.Info.Version = config.RelayVersion
-	outboxRelay.Info.Software = config.RelaySoftware
-	outboxRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL
-
-	outboxRelay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if !outboxRelayLimits.AllowEmptyFilters {
-			if reject, msg := policies.NoEmptyFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if !outboxRelayLimits.AllowComplexFilters {
-			if reject, msg := policies.NoComplexFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		return false, ""
-	}
-
-	outboxRelay.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
-		if reject, msg := policies.RejectEventsWithBase64Media(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := policies.EventIPRateLimiter(
-			outboxRelayLimits.EventIPLimiterTokensPerInterval,
-			time.Minute*time.Duration(outboxRelayLimits.EventIPLimiterInterval),
-			outboxRelayLimits.EventIPLimiterMaxTokens,
-		)(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := EventMustBeLatest(ctx, &event, outboxDB); reject {
-			return reject, msg
-		}
-		return MustBeWhitelistedToPost(ctx, &event)
-	}
-
-	outboxRelay.RejectConnection = policies.ConnectionRateLimiter(
-		outboxRelayLimits.ConnectionRateLimiterTokensPerInterval,
-		time.Minute*time.Duration(outboxRelayLimits.ConnectionRateLimiterInterval),
-		outboxRelayLimits.ConnectionRateLimiterMaxTokens,
-	)
-
+	outboxRelay.OnRequest = chainFilterPolicies(baseFilterPolicies(outboxRelayLimits)...)
+	outboxRelay.OnEvent = chainEventPolicies(append(basePolicies(relayOutbox, outboxRelayLimits),
+		func(ctx context.Context, event *nostr.Event) (bool, string) {
+			return EventMustBeLatest(ctx, event, outboxDB)
+		},
+		MustBeWhitelistedToPost,
+		MustNotBeDeleted(outboxDB),
+	)...)
+	outboxRelay.RejectConnection = connectionPolicies(outboxRelayLimits)
 	outboxRelay.UseEventstore(outboxDB, 1000)
+	outboxRelay.AllowDeleting = OwnerCanDeleteAnyEvent
+	outboxRelay.OverwriteRelayInformation = OverwriteRelayInfo(relayOutbox)
 	outboxRelay.OnEventSaved = func(ctx context.Context, event nostr.Event) {
+		refreshBanList(ctx, event)
 		go blast(ctx, &event)
 	}
+	instrument(outboxRelay, relayOutbox)
 
-	SetupManagementAPI(outboxRelay)
-	mux = outboxRelay.Router()
+	outboxRelay.Router().HandleFunc("GET /{$}", relayIndexHandler(
+		relayOutbox, outboxPubKey, config.OutboxRelayName, config.OutboxRelayDescription,
+		getWSScheme(config.RelayURL)+config.RelayURL+"/outbox",
+	))
 
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
-		data := struct {
-			RelayName        string
-			RelayPubkey      string
-			RelayDescription string
-			RelayURL         string
-		}{
-			RelayName:        config.OutboxRelayName,
-			RelayPubkey:      nPubToPubkey("OUTBOX_RELAY_NPUB", config.OutboxRelayNpub),
-			RelayDescription: config.OutboxRelayDescription,
-			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/outbox",
-		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
+	initBlossom(ctx)
 
-	bl := blossom.New(outboxRelay, getHTTPScheme(config.RelayURL)+config.RelayURL)
-	bl.Store = blossom.EventStoreBlobIndexWrapper{Store: blossomDB, ServiceURL: bl.ServiceURL}
-	bl.StoreBlob = func(ctx context.Context, sha256 string, ext string, body []byte) error {
+	// inbox
+	inboxPubKey := setupRelayInfo(inboxRelay, config.InboxRelayName, "INBOX_RELAY_NPUB", config.InboxRelayNpub,
+		config.InboxRelayDescription, config.InboxRelayIcon, "/inbox")
+
+	inboxRelay.OnRequest = chainFilterPolicies(baseFilterPolicies(inboxRelayLimits)...)
+	inboxRelay.OnEvent = chainEventPolicies(append(basePolicies(relayInbox, inboxRelayLimits),
+		OnlyGiftWrappedDMs,
+		EventMustNotBeFollowList,
+		MustNotBeBlacklistedToPost,
+		MustBeInWotToPost,
+		MustTagWhitelistedPubKey,
+		MustNotBeDeleted(inboxDB),
+	)...)
+	inboxRelay.RejectConnection = connectionPolicies(inboxRelayLimits)
+	inboxRelay.UseEventstore(inboxDB, 1000)
+	inboxRelay.AllowDeleting = OwnerCanDeleteAnyEvent
+	inboxRelay.OverwriteRelayInformation = OverwriteRelayInfo(relayInbox)
+	instrument(inboxRelay, relayInbox)
+
+	inboxRelay.Router().HandleFunc("GET /inbox", relayIndexHandler(
+		relayInbox, inboxPubKey, config.InboxRelayName, config.InboxRelayDescription,
+		getWSScheme(config.RelayURL)+config.RelayURL+"/inbox",
+	))
+}
+
+// initBlossom mounts the blob server on the outbox relay.
+func initBlossom(ctx context.Context) {
+	bl := blossom.New(outboxRelay, blobServiceURL())
+	bl.Store = havenBlobIndex{
+		EventStoreBlobIndexWrapper: blossom.EventStoreBlobIndexWrapper{Store: blossomDB, ServiceURL: bl.ServiceURL},
+	}
+	bl.StoreBlob = func(_ context.Context, sha256 string, ext string, body []byte) error {
 		slog.Debug("storing blob", "sha256", sha256, "ext", ext)
-		file, err := fs.Create(config.BlossomPath + sha256)
-		if err != nil {
+		if err := writeBlob(sha256, body); err != nil {
 			return err
 		}
-		if _, err := io.Copy(file, bytes.NewReader(body)); err != nil {
-			return err
-		}
+		blobInventory.invalidate()
 		return nil
 	}
-	bl.LoadBlob = func(ctx context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
+	bl.LoadBlob = func(_ context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
 		slog.Debug("loading blob", "sha256", sha256, "ext", ext)
-		file, err := fs.Open(config.BlossomPath + sha256)
+		file, err := fs.Open(blobPath(sha256))
 		if err != nil {
+			// serve the placeholder image rather than a bare error
 			file, _ = fs.Open(config.BlossomPath + "404.png")
 			return file, nil, err
 		}
 		return file, nil, nil
 	}
-	bl.DeleteBlob = func(ctx context.Context, sha256 string, ext string) error {
+	bl.DeleteBlob = func(_ context.Context, sha256 string, ext string) error {
 		slog.Debug("deleting blob", "sha256", sha256, "ext", ext)
-		return fs.Remove(config.BlossomPath + sha256)
-	}
-	bl.RejectUpload = func(ctx context.Context, event *nostr.Event, size int, ext string) (bool, string, int) {
-		if _, ok := config.WhitelistedPubKeys[event.PubKey.Hex()]; ok {
-			return false, ext, size
+		removed, err := removeBlob(sha256)
+		if removed {
+			blobInventory.invalidate()
 		}
-
-		return true, "only media signed by whitelisted pubkeys are allowed", 403
+		return err
 	}
+	bl.RejectUpload = func(_ context.Context, event *nostr.Event, size int, ext string) (bool, string, int) {
+		// the whitelist check stays first: somebody who cannot upload at all
+		// should never get to use this endpoint to find out whether a hash is
+		// blocked
+		if !isWhitelisted(event.PubKey.Hex()) {
+			return true, "only media signed by whitelisted pubkeys are allowed", 403
+		}
+		// khatru hashes the body after this hook runs, so the only hash here is
+		// the one the client declared in its authorization event. That gives a
+		// well behaved client a clear refusal before it sends anything, while
+		// havenBlobIndex.Keep is what actually enforces the block.
+		for tag := range event.Tags.FindAll("x") {
+			if len(tag) >= 2 && isBlockedBlob(strings.ToLower(strings.TrimSpace(tag[1]))) {
+				return true, "this blob is blocked by the relay owner", 403
+			}
+		}
+		return false, ext, size
+	}
+	// a blob that was blocked after it was stored stays on disk until the owner
+	// deletes it, so this is what stops it being served in the meantime
+	bl.RejectGet = func(_ context.Context, _ *nostr.Event, sha256 string, _ string) (bool, string, int) {
+		if isBlockedBlob(sha256) {
+			return true, "this blob has been removed by the relay owner", 410
+		}
+		return false, "", 0
+	}
+	instrumentBlossom(bl, relayOutbox)
+
 	migrateBlossomMetadata(ctx, bl)
-
-	inboxRelay.Info.Name = config.InboxRelayName
-	inboxInboxPubKey := nostr.MustPubKeyFromHex(nPubToPubkey("INBOX_RELAY_NPUB", config.InboxRelayNpub))
-	inboxRelay.Info.PubKey = &inboxInboxPubKey
-	inboxRelay.Info.Description = config.InboxRelayDescription
-	inboxRelay.Info.Icon = config.InboxRelayIcon
-	inboxRelay.Info.Version = config.RelayVersion
-	inboxRelay.Info.Software = config.RelaySoftware
-	inboxRelay.ServiceURL = getHTTPScheme(config.RelayURL) + config.RelayURL + "/inbox"
-
-	inboxRelay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if !inboxRelayLimits.AllowEmptyFilters {
-			if reject, msg := policies.NoEmptyFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		if !inboxRelayLimits.AllowComplexFilters {
-			if reject, msg := policies.NoComplexFilters(ctx, filter); reject {
-				return reject, msg
-			}
-		}
-		return false, ""
-	}
-
-	inboxRelay.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
-		if reject, msg := policies.RejectEventsWithBase64Media(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := policies.EventIPRateLimiter(
-			inboxRelayLimits.EventIPLimiterTokensPerInterval,
-			time.Minute*time.Duration(inboxRelayLimits.EventIPLimiterInterval),
-			inboxRelayLimits.EventIPLimiterMaxTokens,
-		)(ctx, event); reject {
-			return reject, msg
-		}
-		if reject, msg := OnlyGiftWrappedDMs(ctx, &event); reject {
-			return reject, msg
-		}
-		if reject, msg := EventMustNotBeFollowList(ctx, &event); reject {
-			return reject, msg
-		}
-		if reject, msg := MustNotBeBlacklistedToPost(ctx, &event); reject {
-			return reject, msg
-		}
-		if reject, msg := MustBeInWotToPost(ctx, &event); reject {
-			return reject, msg
-		}
-		return MustTagWhitelistedPubKey(ctx, &event)
-	}
-
-	inboxRelay.RejectConnection = policies.ConnectionRateLimiter(
-		inboxRelayLimits.ConnectionRateLimiterTokensPerInterval,
-		time.Minute*time.Duration(inboxRelayLimits.ConnectionRateLimiterInterval),
-		inboxRelayLimits.ConnectionRateLimiterMaxTokens,
-	)
-
-	inboxRelay.UseEventstore(inboxDB, 1000)
-
-	SetupManagementAPI(inboxRelay)
-	mux = inboxRelay.Router()
-
-	mux.HandleFunc("GET /inbox", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
-		data := struct {
-			RelayName        string
-			RelayPubkey      string
-			RelayDescription string
-			RelayURL         string
-		}{
-			RelayName:        config.InboxRelayName,
-			RelayPubkey:      nPubToPubkey("INBOX_RELAY_NPUB", config.InboxRelayNpub),
-			RelayDescription: config.InboxRelayDescription,
-			RelayURL:         getWSScheme(config.RelayURL) + config.RelayURL + "/inbox",
-		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
 }
