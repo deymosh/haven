@@ -22,14 +22,21 @@ services:
     container_name: haven-relay
     volumes:
       - ./.env:/app/.env
-      - ./db:/app/db
-      - ./blossom:/app/blossom
+      # everything the relay writes lives under ./data
+      - ./data/db:/app/db
+      - ./data/blossom:/app/blossom
+      - ./data/state:/app/state
       - ./relays_import.json:/app/relays_import.json
       - ./relays_blastr.json:/app/relays_blastr.json
       - ./whitelisted_npubs.json:/app/whitelisted_npubs.json
       - ./blacklisted_npubs.json:/app/blacklisted_npubs.json
     env_file:
       - .env
+    # what the admin console changes and the dashboard's history; /app itself is
+    # not writable by the relay and would not survive a rebuild
+    environment:
+      MANAGEMENT_STATE_FILE: /app/state/management.json
+      ANALYTICS_STATE_FILE: /app/state/metrics.json
     networks:
       - haven-network
     restart: unless-stopped

@@ -1,8 +1,7 @@
 .git
 .gitignore
 .DS_Store
-db
-blossom
+data/
 .env
 .env.*
 *.log
