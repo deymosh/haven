@@ -3,7 +3,7 @@ module github.com/barrydeen/haven
 go 1.25
 
 require (
-	fiatjaf.com/nostr v0.0.0-20260708142249-c591b5592910
+	fiatjaf.com/nostr v0.0.0-20260928115942-58e4c715304e
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/puzpuzpuz/xsync/v4 v4.4.0

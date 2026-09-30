@@ -4,15 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
-	"github.com/joho/godotenv"
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/joho/godotenv"
 )
 
 type S3Config struct {
@@ -68,13 +70,23 @@ type Config struct {
 	BlastrRelays                         []string            `json:"blastr_relays"`
 	BlastrTimeoutSeconds                 int                 `json:"blastr_timeout_seconds"`
 	ProxyURL                             string              `json:"proxy_url"`
+	ManagementAPIEnabled                 bool                `json:"management_api_enabled"`
+	ManagementStateFile                  string              `json:"management_state_file"`
+	AnalyticsEnabled                     bool                `json:"analytics_enabled"`
+	AnalyticsStateFile                   string              `json:"analytics_state_file"`
+	AnalyticsFlushMinutes                int                 `json:"analytics_flush_minutes"`
+	AnalyticsHourlyRetentionDays         int                 `json:"analytics_hourly_retention_days"`
+	AnalyticsDailyRetentionDays          int                 `json:"analytics_daily_retention_days"`
+	AnalyticsAggregateMinutes            int                 `json:"analytics_aggregate_minutes"`
+	AnalyticsMaxKinds                    int                 `json:"analytics_max_kinds"`
+	AnalyticsMaxAuthors                  int                 `json:"analytics_max_authors"`
 	S3Config                             *S3Config           `json:"s3_config"`
 }
 
 const relaySoftware = "https://github.com/deymosh/haven/tree/deploy/docker-tor"
 
 func loadConfig() Config {
-	_ = godotenv.Load(".env")
+	_ = godotenv.Load(envFile())
 
 	cfg := Config{
 		OwnerNpub:                            getEnv("OWNER_NPUB"),
@@ -121,8 +133,20 @@ func loadConfig() Config {
 		BlastrRelays:                         getRelayListFromFile(getEnv("BLASTR_RELAYS_FILE")),
 		BlastrTimeoutSeconds:                 getEnvInt("BLASTR_TIMEOUT_SECONDS", 5),
 		ProxyURL:                             getEnvString("PROXY_URL", ""),
+		ManagementAPIEnabled:                 getEnvBool("MANAGEMENT_API_ENABLED", true),
+		ManagementStateFile:                  getEnvString("MANAGEMENT_STATE_FILE", "management.json"),
+		AnalyticsEnabled:                     getEnvBool("ANALYTICS_ENABLED", true),
+		AnalyticsStateFile:                   getEnvString("ANALYTICS_STATE_FILE", "metrics.json"),
+		AnalyticsFlushMinutes:                getEnvInt("ANALYTICS_FLUSH_MINUTES", 5),
+		AnalyticsHourlyRetentionDays:         getEnvInt("ANALYTICS_HOURLY_RETENTION_DAYS", 8),
+		AnalyticsDailyRetentionDays:          getEnvInt("ANALYTICS_DAILY_RETENTION_DAYS", 90),
+		AnalyticsAggregateMinutes:            getEnvInt("ANALYTICS_AGGREGATE_MINUTES", 15),
+		AnalyticsMaxKinds:                    getEnvInt("ANALYTICS_MAX_KINDS", 64),
+		AnalyticsMaxAuthors:                  getEnvInt("ANALYTICS_MAX_AUTHORS", 100),
 		S3Config:                             getS3Config(),
 	}
+
+	clampAnalyticsConfig(&cfg)
 
 	// Relay owner is always whitelisted
 	cfg.WhitelistedPubKeys[cfg.OwnerPubKey] = struct{}{}
@@ -201,6 +225,17 @@ func getNpubsFromFile(filePath string) map[string]struct{} {
 		pubKeys[nPubToPubkey(filePath, npub)] = struct{}{}
 	}
 	return pubKeys
+}
+
+// envFile is the file loadConfig reads its settings from. config is loaded
+// while the package's variables are initialised, before any test code can run,
+// so a test binary cannot seed the environment itself; it reads a fixed file
+// instead of the relay's own .env, so tests behave the same on every machine.
+func envFile() string {
+	if testing.Testing() {
+		return "testdata/test.env"
+	}
+	return ".env"
 }
 
 func getEnv(key string) string {
@@ -287,13 +322,33 @@ func nPubToPubkey(label, nPub string) string {
 	}
 }
 
-// pubkeyToNpub converts a hex public key string into a bech32 npub string.
-func pubkeyToNpub(hexKey string) (string, error) {
-	pub, err := nostr.PubKeyFromHex(hexKey)
-	if err != nil {
-		return "", err
+// clampAnalyticsConfig brings nonsense into range and says so, rather than
+// refusing to boot. A value that is a number but absurd should not take a relay
+// offline; a warning and a default is the better outcome.
+func clampAnalyticsConfig(cfg *Config) {
+	clamp := func(name string, value *int, lo, hi, def int) {
+		if *value >= lo && *value <= hi {
+			return
+		}
+		slog.Warn("⚠️ analytics setting out of range, using the default instead",
+			"setting", name, "given", *value, "min", lo, "max", hi, "using", def)
+		*value = def
 	}
-	return nip19.EncodeNpub(pub), nil
+
+	clamp("ANALYTICS_FLUSH_MINUTES", &cfg.AnalyticsFlushMinutes, 1, 60, 5)
+	clamp("ANALYTICS_HOURLY_RETENTION_DAYS", &cfg.AnalyticsHourlyRetentionDays, 1, 400, 8)
+	clamp("ANALYTICS_DAILY_RETENTION_DAYS", &cfg.AnalyticsDailyRetentionDays, 1, 3650, 90)
+	clamp("ANALYTICS_AGGREGATE_MINUTES", &cfg.AnalyticsAggregateMinutes, 1, 1440, 15)
+	clamp("ANALYTICS_MAX_KINDS", &cfg.AnalyticsMaxKinds, 8, 4096, 64)
+	clamp("ANALYTICS_MAX_AUTHORS", &cfg.AnalyticsMaxAuthors, 1, 1000, 100)
+
+	// daily has to cover at least as long as hourly, or rolling an hour up would
+	// drop it into a window that has already been pruned
+	if cfg.AnalyticsDailyRetentionDays < cfg.AnalyticsHourlyRetentionDays {
+		slog.Warn("⚠️ daily analytics retention is shorter than hourly, raising it to match",
+			"hourly_days", cfg.AnalyticsHourlyRetentionDays, "daily_days", cfg.AnalyticsDailyRetentionDays)
+		cfg.AnalyticsDailyRetentionDays = cfg.AnalyticsHourlyRetentionDays
+	}
 }
 
 var art = `

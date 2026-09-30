@@ -42,8 +42,15 @@ relay, but anyone can view the images and videos.
 **Web of Trust**: Protected from DM and Inbox spam by using a Web of Trust (WoT). See the [Web of Trust 
 Documentation](docs/wot.md) for more details.
 
-**Access Control**: Whitelist and blacklist npubs. See the [Access Control Documentation](docs/access-control.md) 
-for more details.
+**Access Control**: Whitelist and blacklist npubs, ban them from a nostr list you publish, and delete any event from 
+your relay. See the [Access Control Documentation](docs/access-control.md) for more details.
+
+**Relay Management**: Run the relay from a web page signed in with a nostr browser extension, or over the
+NIP-86 API: ban pubkeys, drop events, block addresses and rename each relay. The same page also **browses the notes
+each relay is storing** — filter, search, inspect and delete them — and graphs the relay on a **dashboard**: traffic,
+connections, accepted against rejected, the kind mix, top authors and storage, with 24-hour, 7-day and 30-day
+history that survives a restart. See the [Relay Management Documentation](docs/relay-management.md) for more
+details.
 
 **Inbox Relay**: Notes are pulled from other relays and stored in the inbox relay.
 
@@ -262,7 +269,7 @@ server {
         proxy_pass http://localhost:3355;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -273,11 +280,11 @@ server {
 
 Replace `yourdomain.com` with your actual domain name.
 
-> **Note:**
-> [`client_max_body_size`](https://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size) is set to 
-> `100m` to allow for larger media files to be uploaded to Blossom. `0` can be used to allow for unlimited file 
-> sizes. If you are using Cloudflare proxy, be mindful of 
-> [upload limits](https://community.cloudflare.com/t/maximum-upload-size-is-limit/418490/2).
+> [!IMPORTANT]
+> `X-Forwarded-For` is set to `$remote_addr`, not the more common `$proxy_add_x_forwarded_for`. The latter *appends*
+> the real client address to whatever the client sent, which lets a client prepend a forged one — Haven reads the
+> leftmost entry, so the forgery would win. This matters for the rate limiters and for
+> [IP blocking](docs/relay-management.md#blocking-addresses).
 
 After adding the configuration, restart nginx:
 
@@ -307,6 +314,10 @@ sudo systemctl restart nginx
            # Proxy for HTTP traffic (NIP-11 relay info page)
            ProxyPass / http://localhost:3355/
            ProxyPassReverse / http://localhost:3355/
+   
+           # Overwrite whatever the client sent, so a forged X-Forwarded-For
+           # cannot win: mod_proxy appends to the header rather than replacing it
+           RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
    
            # Optional: Add HSTS header for enhanced security
            Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
@@ -431,16 +442,18 @@ Once everything is set up, the relay will be running on `localhost:3355` with th
 - `localhost:3355/private`
 - `localhost:3355/chat`
 - `localhost:3355/inbox`
+- `localhost:3355/admin` (relay management, notes browser and dashboard, signed in with a nostr browser extension)
+
+See [Relay Management](docs/relay-management.md) for the admin page and the NIP-86 API behind it.
 
 ## Database
 
-Haven currently supports [BadgerDB](https://github.com/dgraph-io/badger) and [LMDB](https://www.symas.com/mdb) as embedded
-databases, meaning no external database is required.
+Haven stores notes in [LMDB](https://www.symas.com/mdb), an embedded database, meaning no external database is
+required. BadgerDB is no longer supported; to move an existing BadgerDB relay over, [back it up](docs/backup.md) with a
+Haven version that still reads it and restore the backup into the new one.
 
-By default, Haven uses BadgerDB. To switch to LMDB, set the `DB_ENGINE` environment variable to `lmdb` in the `.env` file.
-
-LMDB can be faster than BadgerDB but performs best with NVMe drives and may require fine-tuning based on factors such as
-database size, operating system, file system, and hardware.
+LMDB performs best with NVMe drives and may require fine-tuning based on factors such as database size, operating
+system, file system, and hardware.
 
 ### LMDB Map Size
 
@@ -455,23 +468,15 @@ defines an upper limit for the database size. For more information about LMDB’
 
 ### Migrating from databases created in older versions of Haven
 
-Haven uses [Khatru's event store](https://github.com/fiatjaf/eventstore) to store notes. The way events are stored evolves 
-over time, and occasionally this introduces breaking changes.
+Haven uses the [fiatjaf.com/nostr event store](https://pkg.go.dev/fiatjaf.com/nostr/eventstore) to store notes. The
+way events are stored evolves over time, and occasionally this introduces breaking changes.
 
 As a precaution, before upgrading to a newer version of Haven, you should back up the `db` folder.
 
 Haven versions 1.0.3 and earlier did not replace outdated notes. While this does not affect the relay's core
 functionality, it can result in a bloated database, reduced performance, and bugs in some clients. For this reason, it
-is recommended to delete old databases and start fresh.
-
-BadgerDB users upgrading from Haven version 1.0.5 or earlier may encounter a critical error when starting the relay:
-
-```
-error running migrations: failed to delete index key xxxx: Txn is too big to fit into one request
-```
-
-As a workaround, you can delete the `db` folder and start fresh, optionally [re-importing](#8-import-your-old-notes-optional) your
-previous notes.
+is recommended to delete old databases and start fresh, optionally [re-importing](#8-import-your-old-notes-optional)
+your previous notes.
 
 ## Blossom Media Server
 
@@ -481,6 +486,20 @@ but anyone can view the hosted images and videos.
 
 Media files are stored in the file system based on the `BLOSSOM_PATH` environment variable set in the `.env` file. 
 The default path is `./blossom`.
+
+> [!IMPORTANT]
+> Give `BLOSSOM_PATH` a trailing slash, as `.env.example` does. The path is joined to the file name by
+> concatenation, so `BLOSSOM_PATH="blossom"` writes media *beside* the `blossom` directory rather than inside it,
+> as `./blossom<hash>`. Haven warns at startup when it sees this. It is not corrected automatically, because doing
+> so would hide every file already written that way.
+
+Browse and manage what has been uploaded from the **Media** view of the [admin page](docs/relay-management.md#media):
+filter, search and sort the whole library, delete media, block a hash so the same bytes cannot be uploaded again,
+and reconcile the index against what is actually on disk.
+
+> [!WARNING]
+> Cloud backups cover the media **index**, not the media **files**. Back up your `BLOSSOM_PATH` directory
+> separately. Restoring a backup without it leaves every entry pointing at a file that is no longer there.
 
 ## Cloud Backups
 

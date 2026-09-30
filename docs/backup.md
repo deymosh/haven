@@ -5,8 +5,8 @@
 Haven provides tools for backing up and restoring your relay data. This is essential for several use cases:
 
 * **Disaster Recovery**: Protect your data against hardware failure or accidental deletion.
-* **Switching Databases**: Move your data when migrating to a new server or database provider. Move your notes from 
-  LMDB to BadgerDB or vice versa.
+* **Switching Databases**: Move your data when migrating to a new server or database provider, or out of a BadgerDB
+  database written by an older version of Haven.
 * **Importing/Exporting Data**: Move data between Haven and other Nostr relays.
 
 > [!IMPORTANT]

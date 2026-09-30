@@ -1,10 +1,15 @@
 .DS_Store
 .env
+.claude/
 .idea/
 db.zip
 dist/
 blacklisted_npubs.json
 haven
+management.json
+management.json.tmp
+metrics.json
+metrics.json.tmp
 relays_blastr.json
 relays_import.json
 whitelisted_npubs.json
