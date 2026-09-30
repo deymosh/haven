@@ -448,13 +448,12 @@ See [Relay Management](docs/relay-management.md) for the admin page and the NIP-
 
 ## Database
 
-Haven currently supports [BadgerDB](https://github.com/dgraph-io/badger) and [LMDB](https://www.symas.com/mdb) as embedded
-databases, meaning no external database is required.
+Haven stores notes in [LMDB](https://www.symas.com/mdb), an embedded database, meaning no external database is
+required. BadgerDB is no longer supported; to move an existing BadgerDB relay over, [back it up](docs/backup.md) with a
+Haven version that still reads it and restore the backup into the new one.
 
-By default, Haven uses BadgerDB. To switch to LMDB, set the `DB_ENGINE` environment variable to `lmdb` in the `.env` file.
-
-LMDB can be faster than BadgerDB but performs best with NVMe drives and may require fine-tuning based on factors such as
-database size, operating system, file system, and hardware.
+LMDB performs best with NVMe drives and may require fine-tuning based on factors such as database size, operating
+system, file system, and hardware.
 
 ### LMDB Map Size
 
@@ -469,23 +468,15 @@ defines an upper limit for the database size. For more information about LMDB’
 
 ### Migrating from databases created in older versions of Haven
 
-Haven uses [Khatru's event store](https://github.com/fiatjaf/eventstore) to store notes. The way events are stored evolves 
-over time, and occasionally this introduces breaking changes.
+Haven uses the [fiatjaf.com/nostr event store](https://pkg.go.dev/fiatjaf.com/nostr/eventstore) to store notes. The
+way events are stored evolves over time, and occasionally this introduces breaking changes.
 
 As a precaution, before upgrading to a newer version of Haven, you should back up the `db` folder.
 
 Haven versions 1.0.3 and earlier did not replace outdated notes. While this does not affect the relay's core
 functionality, it can result in a bloated database, reduced performance, and bugs in some clients. For this reason, it
-is recommended to delete old databases and start fresh.
-
-BadgerDB users upgrading from Haven version 1.0.5 or earlier may encounter a critical error when starting the relay:
-
-```
-error running migrations: failed to delete index key xxxx: Txn is too big to fit into one request
-```
-
-As a workaround, you can delete the `db` folder and start fresh, optionally [re-importing](#8-import-your-old-notes-optional) your
-previous notes.
+is recommended to delete old databases and start fresh, optionally [re-importing](#8-import-your-old-notes-optional)
+your previous notes.
 
 ## Blossom Media Server
 
