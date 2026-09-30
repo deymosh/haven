@@ -9,47 +9,73 @@ import (
 	nipb7blossom "fiatjaf.com/nostr/nipb7/blossom"
 )
 
+// migrateBlossomMetadata moves the owner's blob descriptors out of the outbox
+// database, where older versions of haven kept them, and into the dedicated
+// blossom one.
+//
+// It walks the outbox database with the paged reader rather than the blob
+// index's own List, which is a single query capped at 1000 events — past that
+// it would migrate part of the index per boot and report success.
 func migrateBlossomMetadata(ctx context.Context, bl *blossom.BlossomServer) {
-	// Create a temporary Blossom dbWrapper for the migration
-	outboxDBWrapper := blossom.EventStoreBlobIndexWrapper{Store: outboxDB, ServiceURL: getHTTPScheme(config.RelayURL) + config.RelayURL}
+	ownerPk := nostr.MustPubKeyFromHex(config.OwnerPubKey)
 
-	// List all BlobDescriptor for the relay owner pubkey
-	ownerPubkey := nostr.MustPubKeyFromHex(config.OwnerPubKey)
-	var blobs []nipb7blossom.BlobDescriptor
-	for blob := range outboxDBWrapper.List(ctx, ownerPubkey) {
-		blobs = append(blobs, blob)
-	}
-
-	if len(blobs) == 0 {
-		slog.Debug("No blobs found to migrate", "ownerPubkey", ownerPubkey)
+	// everything is collected before anything is written or deleted: the walk
+	// below holds a cursor into the outbox database, and deleting from
+	// underneath it would move the ground it is standing on
+	var events []nostr.Event
+	if _, _, err := eachEvent(outboxDB, nostr.Filter{
+		Authors: []nostr.PubKey{ownerPk},
+		Kinds:   []nostr.Kind{blobIndexKind},
+	}, maxAggregateScan, func(evt nostr.Event) bool {
+		events = append(events, evt)
+		return true
+	}); err != nil {
+		slog.Error("🚫 Failed to list blobs", "error", err)
 		return
 	}
 
-	// Create a map to track migrated blobs
-	migrated := make(map[string]nipb7blossom.BlobDescriptor, len(blobs))
+	if len(events) == 0 {
+		slog.Debug("No blobs found to migrate", "ownerPubkey", config.OwnerPubKey)
+		return
+	}
 
-	slog.Info("BlobDescriptors will be migrated from Outbox to Blossom's DB", "count", len(blobs))
+	slog.Info("BlobDescriptors will be migrated from Outbox to Blossom's DB", "count", len(events))
 
-	for _, blob := range blobs {
-		slog.Debug("Moving BlobDescriptor", "sha256", blob.SHA256, "type", blob.Type, "size", blob.Size)
+	migrated := 0
+	for _, evt := range events {
+		parsed, ok := parseBlobIndexEvent(evt)
+		if !ok {
+			// left where it is rather than deleted: we could not read it, so we
+			// are in no position to decide it is worthless
+			slog.Warn("⚠️ skipping an unreadable blob index entry", "event", evt.ID.Hex())
+			continue
+		}
 
+		blob := nipb7blossom.BlobDescriptor{
+			SHA256:   parsed.SHA256,
+			Size:     parsed.Size,
+			Type:     parsed.Type,
+			Uploaded: parsed.Uploaded,
+		}
 		if blob.Type == "" {
 			blob.Type = "application/octet-stream"
 		}
+		blob.URL = bl.ServiceURL + "/" + blob.SHA256 + nipb7blossom.GetExtension(blob.Type)
 
-		err := bl.Store.Keep(ctx, blob, ownerPubkey)
-		if err != nil {
+		slog.Debug("Moving BlobDescriptor", "sha256", blob.SHA256, "type", blob.Type, "size", blob.Size)
+
+		if err := bl.Store.Keep(ctx, blob, ownerPk); err != nil {
 			slog.Error("🚫 Failed to store blob in Blossom DB", "sha256", blob.SHA256, "error", err)
 			continue
 		}
 
-		err = outboxDBWrapper.Delete(ctx, blob.SHA256, ownerPubkey)
-		if err != nil {
+		if err := outboxDB.DeleteEvent(evt.ID); err != nil {
 			slog.Error("🚫 Failed to delete blob from outbox DB", "sha256", blob.SHA256, "error", err)
 		}
 
-		migrated[blob.SHA256] = blob
+		migrated++
 	}
 
-	slog.Info("✅ Blob migration completed", "migrated", len(migrated))
+	blobInventory.invalidate()
+	slog.Info("✅ Blob migration completed", "migrated", migrated)
 }

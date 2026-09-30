@@ -1,333 +1,367 @@
 package main
 
 import (
-	"context"
+	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"log/slog"
+	"maps"
 	"os"
-	"strings"
+	"slices"
+	"sync"
+	"sync/atomic"
 
-	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/khatru"
-	"fiatjaf.com/nostr/nip86"
+	"github.com/spf13/afero"
 )
 
-func SetupManagementAPI(relay *khatru.Relay) {
-	relay.ManagementAPI.AllowPubKey = AllowPubKey
-	relay.ManagementAPI.UnallowPubKey = UnallowPubKey
-	relay.ManagementAPI.ListAllowedPubKeys = ListAllowedPubKeys
+// The four relays haven serves. These are keyed the same way as the dbs map in
+// init.go, so a NIP-86 request addressed to one of them reaches its database
+// without a second lookup table.
+const (
+	relayPrivate = "private"
+	relayChat    = "chat"
+	relayInbox   = "inbox"
+	relayOutbox  = "outbox"
+)
 
-	relay.ManagementAPI.BanPubKey = BanPubKey
-	relay.ManagementAPI.UnbanPubKey = UnbanPubKey
-	relay.ManagementAPI.ListBannedPubKeys = ListBannedPubKeys
+// managementStateVersion goes into the state file so a future haven can tell
+// what it is reading.
+const managementStateVersion = 1
 
-	relay.ManagementAPI.Stats = Stats
-	relay.ManagementAPI.ChangeRelayIcon = ChangeRelayIcon
+// managementState is an immutable snapshot of everything the NIP-86 relay
+// management API can change. Every mutation clones it, so the readers on the
+// hot paths — one per event, one per connection — only ever do an atomic load,
+// the same trick banlist.go uses for the kind 10084 cache.
+//
+// The maps are keyed by the thing being moderated and hold the reason, rather
+// than being arrays of {pubkey, reason} objects: that is one representation
+// instead of a list plus a derived lookup set that has to be kept in sync,
+// encoding/json sorts map keys so the file stays diffable, and duplicates
+// become impossible.
+type managementState struct {
+	Version        int                    `json:"version"`
+	BannedPubKeys  map[string]string      `json:"banned_pubkeys"`
+	AllowedPubKeys map[string]string      `json:"allowed_pubkeys"`
+	BlockedIPs     map[string]string      `json:"blocked_ips"`
+	BlockedBlobs   map[string]string      `json:"blocked_blobs"`
+	Relays         map[string]*relayState `json:"relays"`
 }
 
-// RejectAPICall helper function to determine if the API call should be rejected based on the authenticated public key
-func RejectAPICall(ctx context.Context) (reject bool, caller nostr.PubKey) {
-	authed, _ := khatru.GetAuthed(ctx)
-	if authed.Hex() != config.OwnerPubKey {
-		return true, authed
-	}
-
-	return false, authed
+// relayState is the per-relay slice of the API. A NIP-86 request is addressed
+// to a URL and haven serves four relays on four paths, so a kind rule or an
+// event ban belongs to the relay it was sent to, not to haven as a whole.
+type relayState struct {
+	Name            string            `json:"name,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Icon            string            `json:"icon,omitempty"`
+	AllowedKinds    []int             `json:"allowed_kinds,omitempty"`
+	DisallowedKinds []int             `json:"disallowed_kinds,omitempty"`
+	BannedEvents    map[string]string `json:"banned_events,omitempty"`
+	AllowedEvents   map[string]string `json:"allowed_events,omitempty"`
 }
 
-// AllowPubKey adds a public key to the whitelist and persists it to the file
-func AllowPubKey(ctx context.Context, pubkey nostr.PubKey, reason string) error {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to allow pubkey", "caller", authed.Hex(), "pubkey", pubkey.Hex(), "reason", reason)
-		return errors.New("unauthorized: only the relay owner can allow pubkeys")
+func newManagementState() *managementState {
+	return &managementState{
+		Version:        managementStateVersion,
+		BannedPubKeys:  map[string]string{},
+		AllowedPubKeys: map[string]string{},
+		BlockedIPs:     map[string]string{},
+		BlockedBlobs:   map[string]string{},
+		Relays:         map[string]*relayState{},
 	}
-
-	slog.Debug("allowing pubkey", "pubkey", pubkey.Hex(), "reason", reason)
-
-	hex := pubkey.Hex()
-	config.WhitelistedPubKeys[hex] = struct{}{}
-
-	// Persist changes to the file if configured
-	filePath := getEnvString("WHITELISTED_NPUBS_FILE", "")
-	if filePath != "" {
-		savePubKeysToFile(filePath, config.WhitelistedPubKeys)
-	}
-
-	return nil
 }
 
-// UnallowPubKey removes a public key from the whitelist and persists the changes
-func UnallowPubKey(ctx context.Context, pubkey nostr.PubKey, reason string) error {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to unallow pubkey", "caller", authed.Hex(), "pubkey", pubkey.Hex(), "reason", reason)
-		return errors.New("unauthorized: only the relay owner can unallow pubkeys")
+// normalise fills in whatever a hand-written or older state file left out, so
+// no reader has to nil check. It deliberately does not validate entries: the
+// only thing we could do with a bad one is drop it, and a dropped entry is
+// erased for good the next time the file is written.
+func (st *managementState) normalise() {
+	st.Version = managementStateVersion
+	if st.BannedPubKeys == nil {
+		st.BannedPubKeys = map[string]string{}
 	}
-
-	slog.Debug("unallowing pubkey", "pubkey", pubkey.Hex(), "reason", reason)
-	
-	hex := pubkey.Hex()
-	if hex == config.OwnerPubKey {
-		slog.Warn("attempted to unallow relay owner pubkey, action blocked", "pubkey", hex)
-		return nil
+	if st.AllowedPubKeys == nil {
+		st.AllowedPubKeys = map[string]string{}
 	}
-
-	delete(config.WhitelistedPubKeys, hex)
-
-	// Persist changes to the file if configured
-	filePath := getEnvString("WHITELISTED_NPUBS_FILE", "")
-	if filePath != "" {
-		savePubKeysToFile(filePath, config.WhitelistedPubKeys)
+	if st.BlockedIPs == nil {
+		st.BlockedIPs = map[string]string{}
 	}
-
-	return nil
-}
-
-// ListAllowedPubKeys returns all currently whitelisted public keys
-func ListAllowedPubKeys(ctx context.Context) ([]nip86.PubKeyReason, error) {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to list allowed pubkeys", "caller", authed.Hex())
-		return nil, errors.New("unauthorized: only the relay owner can list allowed pubkeys")
+	if st.BlockedBlobs == nil {
+		st.BlockedBlobs = map[string]string{}
 	}
-
-	slog.Debug("listing allowed pubkeys via NIP-86")
-
-	var allowed []nip86.PubKeyReason
-	for pubkey := range config.WhitelistedPubKeys {
-		allowed = append(allowed, nip86.PubKeyReason{
-			PubKey: nostr.MustPubKeyFromHex(pubkey),
-			Reason: "whitelisted",
-		})
+	if st.Relays == nil {
+		st.Relays = map[string]*relayState{}
 	}
-
-	return allowed, nil
-}
-
-// BanPubKey adds a public key to the blacklist and persists it to the file
-func BanPubKey(ctx context.Context, pubkey nostr.PubKey, reason string) error {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to ban pubkey", "caller", authed.Hex(), "pubkey", pubkey.Hex(), "reason", reason)
-		return errors.New("unauthorized: only the relay owner can ban pubkeys")
-	}
-
-	slog.Debug("banning pubkey", "pubkey", pubkey.Hex(), "reason", reason)
-	
-	hex := pubkey.Hex()
-	if hex == config.OwnerPubKey {
-		slog.Warn("attempted to ban relay owner pubkey, action blocked", "pubkey", hex)
-		return nil
-	}
-
-	config.BlacklistedPubKeys[hex] = struct{}{}
-
-	// Persist changes to the file if configured
-	filePath := getEnvString("BLACKLISTED_NPUBS_FILE", "")
-	if filePath != "" {
-		savePubKeysToFile(filePath, config.BlacklistedPubKeys)
-	}
-
-	return nil
-}
-
-// UnbanPubKey removes a public key from the blacklist and persists the changes
-func UnbanPubKey(ctx context.Context, pubkey nostr.PubKey, reason string) error {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to unban pubkey", "caller", authed.Hex(), "pubkey", pubkey.Hex(), "reason", reason)
-		return errors.New("unauthorized: only the relay owner can unban pubkeys")
-	}
-
-	slog.Debug("unbanning pubkey", "pubkey", pubkey.Hex(), "reason", reason)
-	
-	hex := pubkey.Hex()
-	delete(config.BlacklistedPubKeys, hex)
-
-	// Persist changes to the file if configured
-	filePath := getEnvString("BLACKLISTED_NPUBS_FILE", "")
-	if filePath != "" {
-		savePubKeysToFile(filePath, config.BlacklistedPubKeys)
-	}
-
-	return nil
-}
-
-// ListBannedPubKeys returns all currently blacklisted public keys
-func ListBannedPubKeys(ctx context.Context) ([]nip86.PubKeyReason, error) {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to list banned pubkeys", "caller", authed.Hex())
-		return nil, errors.New("unauthorized: only the relay owner can list banned pubkeys")
-	}
-
-	slog.Debug("listing banned pubkeys via NIP-86")
-
-	var banned []nip86.PubKeyReason
-	for pubkey := range config.BlacklistedPubKeys {
-		banned = append(banned, nip86.PubKeyReason{
-			PubKey: nostr.MustPubKeyFromHex(pubkey),
-			Reason: "blacklisted",
-		})
-	}
-
-	return banned, nil
-}
-
-// ChangeRelayIcon updates all relays' icon URLs and persists them to the .env file
-func ChangeRelayIcon(ctx context.Context, iconURL string) error {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to change relay icon", "caller", authed.Hex(), "icon", iconURL)
-		return errors.New("unauthorized: only the relay owner can change the relay icon")
-	}
-
-	slog.Debug("changing relay icon for all relays", "icon", iconURL)
-
-	relays := map[string]*khatru.Relay{
-		"PRIVATE": privateRelay,
-		"CHAT":    chatRelay,
-		"INBOX":   inboxRelay,
-		"OUTBOX":  outboxRelay,
-	}
-
-	filePath := getEnvString("ENV_FILE_PATH", ".env")
-
-	for prefix, relay := range relays {
-		if relay != nil {
-			relay.Info.Icon = iconURL
+	for _, rs := range st.Relays {
+		if rs.BannedEvents == nil {
+			rs.BannedEvents = map[string]string{}
 		}
-		envKey := prefix + "_RELAY_ICON"
-		updateEnvFileString(filePath, envKey, iconURL)
+		if rs.AllowedEvents == nil {
+			rs.AllowedEvents = map[string]string{}
+		}
+	}
+}
+
+// clone deep copies the state. Every nested map and slice has to be copied too:
+// sharing a *relayState would let a mutation leak into the snapshot readers are
+// already holding.
+func (st *managementState) clone() *managementState {
+	next := &managementState{
+		Version:        managementStateVersion,
+		BannedPubKeys:  maps.Clone(st.BannedPubKeys),
+		AllowedPubKeys: maps.Clone(st.AllowedPubKeys),
+		BlockedIPs:     maps.Clone(st.BlockedIPs),
+		BlockedBlobs:   maps.Clone(st.BlockedBlobs),
+		Relays:         make(map[string]*relayState, len(st.Relays)),
+	}
+	for name, rs := range st.Relays {
+		next.Relays[name] = &relayState{
+			Name:            rs.Name,
+			Description:     rs.Description,
+			Icon:            rs.Icon,
+			AllowedKinds:    slices.Clone(rs.AllowedKinds),
+			DisallowedKinds: slices.Clone(rs.DisallowedKinds),
+			BannedEvents:    maps.Clone(rs.BannedEvents),
+			AllowedEvents:   maps.Clone(rs.AllowedEvents),
+		}
+	}
+	return next
+}
+
+// relay returns the state for one relay, creating it if this is the first time
+// anything has been set on it. Only call it on a clone, from inside update.
+func (st *managementState) relay(name string) *relayState {
+	rs, ok := st.Relays[name]
+	if !ok {
+		rs = &relayState{
+			BannedEvents:  map[string]string{},
+			AllowedEvents: map[string]string{},
+		}
+		st.Relays[name] = rs
+	}
+	return rs
+}
+
+// relayOrEmpty returns the state for one relay, or an empty one when nothing
+// has been set. For readers, which must not allocate into the shared snapshot.
+func (st *managementState) relayOrEmpty(name string) *relayState {
+	if rs, ok := st.Relays[name]; ok {
+		return rs
+	}
+	return &relayState{}
+}
+
+// managementStore holds the state the NIP-86 API works on. Readers load the
+// pointer and never take the lock; the lock only serialises writers, which are
+// owner initiated and rare.
+type managementStore struct {
+	path   string
+	mu     sync.Mutex
+	state  atomic.Pointer[managementState]
+	frozen bool // guarded by mu; set when the file on disk could not be read
+}
+
+var management = &managementStore{}
+
+// get returns the current snapshot. It is never nil once loadManagementStore
+// has run, which main does before anything else touches it.
+func (s *managementStore) get() *managementState {
+	if st := s.state.Load(); st != nil {
+		return st
+	}
+	return newManagementState()
+}
+
+// errManagementFrozen is what every mutating method returns when the state file
+// could not be read at startup. Writing would overwrite whatever is in there,
+// which is exactly what somebody with a broken file does not want.
+func (s *managementStore) errManagementFrozen() error {
+	return fmt.Errorf("the management state file %s could not be read at startup; fix or remove it and restart haven", s.path)
+}
+
+// update applies mutate to a copy of the current state and saves it before it
+// becomes visible, so a "true" answer from the API means the change survived a
+// restart. If saving fails nothing changes at all.
+func (s *managementStore) update(mutate func(*managementState) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.frozen {
+		return s.errManagementFrozen()
 	}
 
+	next := s.get().clone()
+	if err := mutate(next); err != nil {
+		return err
+	}
+	if err := s.persist(next); err != nil {
+		slog.Error("🚫 error saving the management state", "path", s.path, "error", err)
+		return fmt.Errorf("could not save the management state: %w", err)
+	}
+	s.state.Store(next)
 	return nil
 }
 
-// Stats returns usage statistics including connected clients and relay metrics for all relays with differentiated keys
-func Stats(ctx context.Context) (nip86.Response, error) {
-	reject, authed := RejectAPICall(ctx)
-	if reject {
-		slog.Warn("unauthorized attempt to fetch stats", "caller", authed.Hex())
-		return nip86.Response{}, errors.New("unauthorized: only the relay owner can fetch stats")
-	}
+// persist writes through a temp file and a rename, so a crash halfway through
+// leaves the previous state intact instead of a truncated file. The temp file
+// has to live next to the target: a rename is only atomic within a filesystem.
+//
+// afero has no way to fsync the containing directory, so a power loss in the
+// instant after the rename could still lose the write. Nothing here is worth
+// dropping the afero indirection for.
+func (s *managementStore) persist(state *managementState) error {
+	tmp := s.path + ".tmp"
 
-	slog.Debug("fetching aggregated stats for all relays via NIP-86")
-
-	relays := map[string]*khatru.Relay{
-		"private": privateRelay,
-		"chat":    chatRelay,
-		"inbox":   inboxRelay,
-		"outbox":  outboxRelay,
-	}
-
-	dbs := map[string]DBBackend{
-		"private": privateDB,
-		"chat":    chatDB,
-		"inbox":   inboxDB,
-		"outbox":  outboxDB,
-	}
-
-	statsData := map[string]interface{}{
-		"whitelisted_count": len(config.WhitelistedPubKeys),
-		"blacklisted_count": len(config.BlacklistedPubKeys),
-	}
-
-	for name, relay := range relays {
-		var clientsCount, listenersCount int
-		if relay != nil {
-			clientsCount, listenersCount = relay.Stats()
-		}
-
-		var totalEvents uint32
-		if db, exists := dbs[name]; exists && db != nil {
-			totalEvents, _ = db.CountEvents(nostr.Filter{})
-		}
-
-		statsData[name+"_connected_clients"] = clientsCount
-		statsData[name+"_active_listeners"] = listenersCount
-		statsData[name+"_total_events"] = totalEvents
-	}
-
-	return nip86.Response{Result: statsData}, nil
-}
-
-// savePubKeysToFile helper function to dump map keys into a JSON array file as npubs
-func savePubKeysToFile(filePath string, pubKeysMap map[string]struct{}) {
-	npubs := []string{}
-	for hexKey := range pubKeysMap {
-		npub, err := pubkeyToNpub(hexKey)
-		if err != nil {
-			slog.Error("failed to encode pubkey to npub during persistence", "hex", hexKey, "error", err)
-			continue
-		}
-		npubs = append(npubs, npub)
-	}
-
-	fileData, err := json.MarshalIndent(npubs, "", "  ")
+	f, err := fs.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		slog.Error("failed to marshal pubkeys for persistence", "file", filePath, "error", err)
+		return err
+	}
+
+	cleanup := func(err error) error {
+		_ = f.Close()
+		_ = fs.Remove(tmp)
+		return err
+	}
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(state); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Sync(); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = fs.Remove(tmp)
+		return err
+	}
+	return fs.Rename(tmp, s.path)
+}
+
+// loadManagementStore reads the state the NIP-86 API saved on a previous run.
+// A missing file is the normal first boot. A file that cannot be read or parsed
+// freezes the API instead of starting empty: whatever is in there was either
+// hand edited or written by a newer haven, and the next write would destroy it.
+// The relay keeps serving either way — moderation state going bad is not a
+// reason to refuse to start.
+func loadManagementStore() {
+	management.path = config.ManagementStateFile
+	management.state.Store(newManagementState())
+
+	data, err := afero.ReadFile(fs, management.path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		slog.Debug("ℹ️ no management state file yet", "path", management.path)
+		return
+	case err != nil:
+		management.frozen = true
+		slog.Error("🚫 could not read the management state file, the relay management API is read-only until it is fixed",
+			"path", management.path, "error", err)
 		return
 	}
 
-	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
-		slog.Error("failed to write pubkeys file for persistence", "file", filePath, "error", err)
-	}
-}
-
-// updateEnvFileString updates or adds a key-value string pair in the specified .env file safely, preserving comments and format
-func updateEnvFileString(filePath string, key string, value string) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		slog.Error("failed to read .env file for updating", "file", filePath, "error", err)
+	var state managementState
+	if err := json.Unmarshal(data, &state); err != nil {
+		management.frozen = true
+		slog.Error("🚫 could not parse the management state file, the relay management API is read-only until it is fixed",
+			"path", management.path, "error", err)
 		return
 	}
 
-	text := strings.ReplaceAll(string(content), "\r\n", "\n")
-	lines := strings.Split(text, "\n")
+	state.normalise()
+	management.state.Store(&state)
 
-	updated := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	log.Println("🛡️ Management state loaded:",
+		len(state.BannedPubKeys), "banned pubkeys,",
+		len(state.AllowedPubKeys), "allowed pubkeys,",
+		len(state.BlockedIPs), "blocked IPs,",
+		len(state.BlockedBlobs), "blocked blobs")
+}
 
-		// Ignore comments and empty lines
-		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
-			continue
-		}
+//
+// union readers
+//
+// The NIP-86 API is not the only source of bans or of whitelisting: the owner
+// also publishes a kind 10084 list and maintains npub files. Neither of those
+// can be written by the relay, so the API keeps its own store and everything
+// that enforces a rule reads the union through one of these.
+//
 
-		// Split the line into key-value and comment parts
-		parts := strings.SplitN(line, "#", 2)
-		keyValuePart := strings.TrimSpace(parts[0])
-
-		// Split the key-value part into key and value
-		kv := strings.SplitN(keyValuePart, "=", 2)
-		if len(kv) == 2 {
-			currentKey := strings.TrimSpace(kv[0])
-			if currentKey == key {
-				// Preserve the comment if it exists
-				commentPart := ""
-				if len(parts) == 2 {
-					commentPart = " #" + parts[1]
-				}
-				lines[i] = key + `="` + value + `"` + commentPart
-				updated = true
-				break
-			}
-		}
+// isBanned reports whether a pubkey is banned, by either route: the kind 10084
+// list the owner publishes, or the NIP-86 API. The list is read-only to the
+// API — haven has no key to sign a replacement with.
+func isBanned(pubKey string) bool {
+	if bannedPubKeys.has(pubKey) {
+		return true
 	}
+	_, ok := management.get().BannedPubKeys[pubKey]
+	return ok
+}
 
-	if !updated {
-		// Remove trailing empty lines before appending the new key-value pair 
-		for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-			lines = lines[:len(lines)-1]
-		}
-		lines = append(lines, key+`="`+value+`"`, "")
+// isWhitelisted reports whether a pubkey has owner-level access, from either
+// the npubs file or the NIP-86 allow list.
+func isWhitelisted(pubKey string) bool {
+	if _, ok := config.WhitelistedPubKeys[pubKey]; ok {
+		return true
 	}
+	_, ok := management.get().AllowedPubKeys[pubKey]
+	return ok
+}
 
-	output := strings.Join(lines, "\n")
-	if err := os.WriteFile(filePath, []byte(output), 0644); err != nil {
-		slog.Error("failed to write updated .env file", "file", filePath, "error", err)
+// isBlockedIP reports whether an address has been blocked over the API.
+func isBlockedIP(ip string) bool {
+	if ip == "" {
+		return false
 	}
+	_, ok := management.get().BlockedIPs[ip]
+	return ok
+}
+
+// isBlockedBlob reports whether a blob hash is on the owner's blocklist. Unlike
+// a banned pubkey this has only one source — there is no published list of
+// blocked hashes to merge in — but it belongs with the other readers because it
+// sits on the same kind of hot path they do: every upload and every download of
+// a blob asks it.
+func isBlockedBlob(sha256 string) bool {
+	if sha256 == "" {
+		return false
+	}
+	_, ok := management.get().BlockedBlobs[sha256]
+	return ok
+}
+
+// isBannedEvent reports whether an event was banned from one relay.
+func isBannedEvent(relay, id string) bool {
+	_, ok := management.get().relayOrEmpty(relay).BannedEvents[id]
+	return ok
+}
+
+// effectiveRelayInfo applies the overrides set over the management API to the
+// name, description and icon a relay was configured with. An override that was
+// never set, or was cleared, leaves the configured value alone.
+func effectiveRelayInfo(relay, name, description, icon string) (string, string, string) {
+	rs := management.get().relayOrEmpty(relay)
+	return cmp.Or(rs.Name, name), cmp.Or(rs.Description, description), cmp.Or(rs.Icon, icon)
+}
+
+// whitelistedPubKeys returns the union as a slice, for the nostr filters the
+// import paths build.
+func whitelistedPubKeys() []string {
+	return slices.Collect(maps.Keys(whitelistedPubKeySet()))
+}
+
+// whitelistedPubKeySet returns the union as a map. It is always a fresh map:
+// the web of trust refresher reads whatever it is given on every refresh, so
+// handing it config.WhitelistedPubKeys and then writing to that map would be a
+// data race.
+func whitelistedPubKeySet() map[string]struct{} {
+	allowed := management.get().AllowedPubKeys
+	set := make(map[string]struct{}, len(config.WhitelistedPubKeys)+len(allowed))
+	maps.Copy(set, config.WhitelistedPubKeys)
+	for pubKey := range allowed {
+		set[pubKey] = struct{}{}
+	}
+	return set
 }

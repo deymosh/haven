@@ -2,17 +2,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"slices"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/eventstore"
+	"fiatjaf.com/nostr/khatru"
+	"fiatjaf.com/nostr/nip11"
 	"github.com/barrydeen/haven/pkg/wot"
 )
 
 func MustBeWhitelistedToQuery(ctx context.Context, _ nostr.Filter) (bool, string) {
 	authenticatedUser, _ := khatru.GetAuthed(ctx)
-	if _, ok := config.WhitelistedPubKeys[authenticatedUser.Hex()]; !ok {
+	if !isWhitelisted(authenticatedUser.Hex()) {
 		slog.Debug("🚫 query rejected: user is not whitelisted", "user", authenticatedUser)
 		return true, "restricted: you must be whitelisted to query this relay"
 	}
@@ -30,14 +34,14 @@ func MustBeInWotToQuery(ctx context.Context, _ nostr.Filter) (bool, string) {
 
 func MustBeWhitelistedToPost(ctx context.Context, event *nostr.Event) (bool, string) {
 	// Event from a whitelisted pubkey can always be posted, even if the user is not authenticated
-	if _, ok := config.WhitelistedPubKeys[event.PubKey.Hex()]; ok {
+	if isWhitelisted(event.PubKey.Hex()) {
 		return false, ""
 	}
 	authenticatedUser, ok := khatru.GetAuthed(ctx)
 	if !ok {
 		return true, "auth-required: you must be authenticated to post to this relay"
 	}
-	if _, ok := config.WhitelistedPubKeys[authenticatedUser.Hex()]; !ok {
+	if !isWhitelisted(authenticatedUser.Hex()) {
 		slog.Debug("🚫 event rejected: user is not whitelisted", "event", event.ID, "pubkey", authenticatedUser)
 		return true, "restricted: you must be whitelisted to post to this relay"
 	}
@@ -60,13 +64,81 @@ func MustBeInWotToPost(ctx context.Context, event *nostr.Event) (bool, string) {
 	return false, ""
 }
 
-// isBanned reports whether a pubkey is banned. With the management API in
-// place this becomes the union of the npubs file, the owner's kind 10084
-// list and whatever was banned over NIP-86; every rule that enforces a ban
-// reads it through here.
-func isBanned(pubKey string) bool {
-	_, ok := config.BlacklistedPubKeys[pubKey]
-	return ok
+func MustNotBeBannedToPost(ctx context.Context, event *nostr.Event) (bool, string) {
+	if isBanned(event.PubKey.Hex()) {
+		slog.Debug("🚫 event rejected: event author is banned", "event", event.ID, "pubkey", event.PubKey)
+		return true, "you are banned from this relay"
+	}
+	// gift wraps and the like are signed with throwaway keys, so check who is on
+	// the other end of the connection too, when we know
+	if authenticatedUser, ok := khatru.GetAuthed(ctx); ok && isBanned(authenticatedUser.Hex()) {
+		slog.Debug("🚫 event rejected: authenticated user is banned", "event", event.ID, "pubkey", authenticatedUser)
+		return true, "you are banned from this relay"
+	}
+	return false, ""
+}
+
+// MustNotBeIPBlocked drops websocket connections from addresses the owner
+// blocked over the management API. It keys on the same address khatru's rate
+// limiters do. It only covers websocket upgrades, which is all RejectConnection
+// gets called for: a blocked address can still read the NIP-11 document, the
+// landing page and blossom blobs.
+func MustNotBeIPBlocked(r *http.Request) bool {
+	ip := khatru.GetIPFromRequest(r)
+	if !isBlockedIP(ip) {
+		return false
+	}
+	slog.Debug("🚫 connection rejected: blocked IP", "ip", ip)
+	return true
+}
+
+// MustBeAnAllowedKind enforces the kind rules set over the management API for
+// one relay. An empty allow list means no allow list, or a relay would stop
+// accepting everything the moment the state file appeared. The rules only ever
+// narrow what a relay already accepts.
+func MustBeAnAllowedKind(relay string) func(context.Context, *nostr.Event) (bool, string) {
+	return func(_ context.Context, event *nostr.Event) (bool, string) {
+		// the owner's delete requests always get through, or disallowing kind 5
+		// would cost them the ability to delete anything
+		if isOwnerDeleteRequest(event) {
+			return false, ""
+		}
+
+		kind := int(event.Kind)
+		rs := management.get().relayOrEmpty(relay)
+		if slices.Contains(rs.DisallowedKinds, kind) {
+			slog.Debug("🚫 event rejected: disallowed kind", "event", event.ID, "kind", kind)
+			return true, fmt.Sprintf("kind %d is not accepted by this relay", kind)
+		}
+		if len(rs.AllowedKinds) > 0 && !slices.Contains(rs.AllowedKinds, kind) {
+			slog.Debug("🚫 event rejected: kind is not on the allow list", "event", event.ID, "kind", kind)
+			return true, fmt.Sprintf("kind %d is not accepted by this relay", kind)
+		}
+		return false, ""
+	}
+}
+
+// MustNotBeABannedEvent rejects an event the owner banned over the management
+// API. banevent deletes the stored copy; without this the next publish would
+// simply put it back.
+func MustNotBeABannedEvent(relay string) func(context.Context, *nostr.Event) (bool, string) {
+	return func(_ context.Context, event *nostr.Event) (bool, string) {
+		if isBannedEvent(relay, event.ID.Hex()) {
+			slog.Debug("🚫 event rejected: event is banned", "event", event.ID, "relay", relay)
+			return true, "this event is banned from this relay"
+		}
+		return false, ""
+	}
+}
+
+// OverwriteRelayInfo applies the name, description and icon the owner set over
+// the management API to a relay's NIP-11 document. khatru hands this hook a
+// copy of rl.Info, so this is the race free place to change them.
+func OverwriteRelayInfo(relay string) func(context.Context, *http.Request, nip11.RelayInformationDocument) nip11.RelayInformationDocument {
+	return func(_ context.Context, _ *http.Request, info nip11.RelayInformationDocument) nip11.RelayInformationDocument {
+		info.Name, info.Description, info.Icon = effectiveRelayInfo(relay, info.Name, info.Description, info.Icon)
+		return info
+	}
 }
 
 // isOwnerDeleteRequest reports whether the event is a NIP-09 delete request from
@@ -199,7 +271,7 @@ func MustTagWhitelistedPubKey(_ context.Context, event *nostr.Event) (bool, stri
 		if len(tag) < 2 {
 			continue
 		}
-		if _, ok := config.WhitelistedPubKeys[tag[1]]; ok {
+		if isWhitelisted(tag[1]) {
 			return false, ""
 		}
 	}
