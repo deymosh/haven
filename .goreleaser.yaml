@@ -1,10 +1,10 @@
 version: 2
-project_name: haven
+project_name: sanctum
 before:
   hooks:
     - go mod tidy
 builds:
-  - id: haven-darwin
+  - id: sanctum-darwin
     goos:
       - darwin
     goarch:
@@ -12,13 +12,14 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X main.buildVersion={{ .Version }}
     flags:
       - -trimpath
       - -buildmode=pie
     env:
       - CGO_ENABLED=1
 
-  - id: haven-linux
+  - id: sanctum-linux
     goos:
       - linux
     goarch:
@@ -26,6 +27,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X main.buildVersion={{ .Version }}
     flags:
       - -trimpath
     env:
@@ -41,7 +43,7 @@ builds:
           {{- if eq .Arch "arm64"}}CC=zig c++ -target aarch64-linux-musl{{- end }}
         {{- end }}
 
-  - id: haven-windows
+  - id: sanctum-windows
     goos:
       - windows
     goarch:
@@ -49,6 +51,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X main.buildVersion={{ .Version }}
     flags:
       - -trimpath
     env:
@@ -114,17 +117,6 @@ changelog:
       order: 3
     - title: Others
       order: 999
-
-signs:
-  - artifacts: checksum
-    args:
-      - "--batch"
-      - "-u"
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - "--output"
-      - "${signature}"
-      - "--detach-sign"
-      - "${artifact}"
 
 release:
   prerelease: auto

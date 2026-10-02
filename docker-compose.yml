@@ -1,7 +1,7 @@
 services:
-  haven-tor:
-    image: lncm/tor:latest
-    container_name: haven-tor
+  sanctum-tor:
+    image: ghcr.io/deymosh/tor:latest
+    container_name: sanctum-tor
     restart: always
     healthcheck:
       test: ["CMD", "bash", "-c", "grep -q 'Bootstrapped 100%' /var/lib/tor/tor.log"]
@@ -12,14 +12,15 @@ services:
       - ./tor/torrc:/etc/tor/torrc:ro
       - ./tor/data:/var/lib/tor
     networks:
-      - haven-network
+      - sanctum-network
 
-  haven-relay:
-    image: haven-relay
+  sanctum-relay:
+    # falls back to a local build when the image is not available yet
+    image: ghcr.io/deymosh/sanctum:latest
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: haven-relay
+    container_name: sanctum-relay
     volumes:
       - ./.env:/app/.env
       # everything the relay writes lives under ./data
@@ -38,7 +39,7 @@ services:
       MANAGEMENT_STATE_FILE: /app/state/management.json
       ANALYTICS_STATE_FILE: /app/state/metrics.json
     networks:
-      - haven-network
+      - sanctum-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3355/outbox", "||", "exit", "1"]
@@ -47,5 +48,5 @@ services:
       retries: 3
 
 networks:
-  haven-network:
+  sanctum-network:
     driver: bridge

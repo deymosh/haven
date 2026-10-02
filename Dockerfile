@@ -18,14 +18,15 @@ COPY . .
 RUN --mount=type=cache,target=/gomod-cache --mount=type=cache,target=/go-cache \
     go mod download
 
-# Build the app
+# Build the app; VERSION stamps the version the relay reports over NIP-11
+ARG VERSION=dev
 RUN --mount=type=cache,target=/gomod-cache --mount=type=cache,target=/go-cache \
-    go build -a -tags netgo -ldflags '-w -s -extldflags "-static"' -o haven .
+    go build -a -tags netgo -ldflags "-w -s -extldflags \"-static\" -X main.buildVersion=${VERSION}" -o sanctum .
 
 # Final Alpine image (keeps latest tag intentionally)
 FROM alpine:latest
 
-ENV HAVEN_IMPORT_FLAG=false
+ENV IMPORT_FLAG=false
 
 # Add non-root user specification
 RUN adduser -D -g '' nonroot
@@ -33,10 +34,10 @@ RUN adduser -D -g '' nonroot
 WORKDIR /app
 
 # Copy Go application
-COPY --from=builder /app/haven .
+COPY --from=builder /app/sanctum .
 
 # Ensure the main executable has the correct permissions
-RUN chmod +x /app/haven
+RUN chmod +x /app/sanctum
 
 # Copy the httml templates
 COPY --from=builder /app/templates /app/templates
