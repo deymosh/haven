@@ -1,7 +1,17 @@
+name: sanctum
+
 services:
   sanctum-tor:
     image: ghcr.io/deymosh/tor:latest
     container_name: sanctum-tor
+    # tor refuses to run unless its data directory is owned by toruser and
+    # mode 0700, and a bind mount arrives root-owned on most hosts. Start as
+    # root, fix the mount once, then drop to toruser for tor itself.
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chown 1000:1000 /var/lib/tor && chmod 700 /var/lib/tor && exec setpriv --reuid 1000 --regid 1000 --clear-groups tor -f /etc/tor/torrc
     restart: always
     healthcheck:
       test: ["CMD", "bash", "-c", "grep -q 'Bootstrapped 100%' /var/lib/tor/tor.log"]

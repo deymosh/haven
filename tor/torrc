@@ -1,3 +1,5 @@
+# 0.0.0.0 is safe here: the socks port is only reachable inside the compose
+# network, no ports are published to the host
 SocksPort 0.0.0.0:9050
 DataDirectory /var/lib/tor
 Log notice stdout
