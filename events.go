@@ -67,7 +67,7 @@ const (
 // already returned at the second the last page ended on, not just the second
 // itself. That is a workaround for a backend trap rather than a protocol, so it
 // is handed out opaque rather than as fields a client could assemble by hand and
-// get subtly wrong, and the prefix means a cursor minted by an older haven is
+// get subtly wrong, and the prefix means a cursor minted by an older sanctum is
 // refused with a sentence instead of decoded into nonsense.
 const eventCursorPrefix = "hv1."
 
@@ -208,7 +208,7 @@ type eventDeleteResult struct {
 	PubKey  string `json:"pubkey,omitempty"`
 	Class   string `json:"class,omitempty"`
 	// Permanent is whether anything stops this coming back. Deleting a stored
-	// copy is not a NIP-09 request — haven holds no private key to sign one with
+	// copy is not a NIP-09 request — sanctum holds no private key to sign one with
 	// — so the usual answer is no: a whitelisted author, an import or a restore
 	// will all put it straight back. It is true only when the id is on this
 	// relay's banned list, or when the relay already holds a delete request

@@ -49,7 +49,7 @@ func blobDirAndPrefix() (dir, prefix string) {
 	return dir, prefix
 }
 
-// checkBlobPath warns when BLOSSOM_PATH has no trailing separator. haven creates
+// checkBlobPath warns when BLOSSOM_PATH has no trailing separator. sanctum creates
 // the directory and then writes blobs next to it rather than inside it, which is
 // confusing, litters the working directory with one file per blob, and is not
 // something we can quietly correct: every file already written would vanish from
@@ -531,7 +531,7 @@ func listBlockedBlobs() []blobReason {
 	return entries
 }
 
-// havenBlobIndex is khatru's blob index with the owner's blocklist in front of
+// sanctumBlobIndex is khatru's blob index with the owner's blocklist in front of
 // it. It embeds rather than reimplements so the URLs and file extensions the
 // public /list endpoint serves stay byte identical to what they are today.
 //
@@ -540,11 +540,11 @@ func listBlockedBlobs() []blobReason {
 // but both the upload and the mirror handler call Keep before they call
 // StoreBlob, which makes the index the one chokepoint every recording path
 // crosses before any bytes reach the disk.
-type havenBlobIndex struct {
+type sanctumBlobIndex struct {
 	blossom.EventStoreBlobIndexWrapper
 }
 
-func (ix havenBlobIndex) Keep(ctx context.Context, blob nipb7blossom.BlobDescriptor, pubkey nostr.PubKey) error {
+func (ix sanctumBlobIndex) Keep(ctx context.Context, blob nipb7blossom.BlobDescriptor, pubkey nostr.PubKey) error {
 	if isBlockedBlob(blob.SHA256) {
 		slog.Info("🚫 refused a blocked blob", "sha256", blob.SHA256, "pubkey", pubkey.Hex())
 		return errors.New("this blob is blocked by the relay owner")
@@ -552,14 +552,14 @@ func (ix havenBlobIndex) Keep(ctx context.Context, blob nipb7blossom.BlobDescrip
 	return ix.EventStoreBlobIndexWrapper.Keep(ctx, blob, pubkey)
 }
 
-func (ix havenBlobIndex) Get(ctx context.Context, sha256 string) (*nipb7blossom.BlobDescriptor, error) {
+func (ix sanctumBlobIndex) Get(ctx context.Context, sha256 string) (*nipb7blossom.BlobDescriptor, error) {
 	if isBlockedBlob(sha256) {
 		return nil, nil
 	}
 	return ix.EventStoreBlobIndexWrapper.Get(ctx, sha256)
 }
 
-func (ix havenBlobIndex) List(ctx context.Context, pubkey nostr.PubKey) iter.Seq[nipb7blossom.BlobDescriptor] {
+func (ix sanctumBlobIndex) List(ctx context.Context, pubkey nostr.PubKey) iter.Seq[nipb7blossom.BlobDescriptor] {
 	return func(yield func(nipb7blossom.BlobDescriptor) bool) {
 		for blob := range ix.EventStoreBlobIndexWrapper.List(ctx, pubkey) {
 			if isBlockedBlob(blob.SHA256) {

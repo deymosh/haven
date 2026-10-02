@@ -16,7 +16,7 @@ import (
 	"fiatjaf.com/nostr/nip86"
 )
 
-// Where a ban or an allow came from. haven has more than one source and only
+// Where a ban or an allow came from. sanctum has more than one source and only
 // the ones the API wrote can be undone through the API, so the source travels
 // with each entry. NIP-86 clients that don't know the field ignore it.
 const (
@@ -114,7 +114,7 @@ func allowPubKey(pubKey, reason string) error {
 }
 
 // unallowPubKey takes away the whitelist privileges this API granted. A pubkey
-// listed in WHITELISTED_NPUBS_FILE keeps them: haven must not rewrite a file
+// listed in WHITELISTED_NPUBS_FILE keeps them: sanctum must not rewrite a file
 // the owner maintains by hand.
 func unallowPubKey(pubKey string) error {
 	if pubKey == config.OwnerPubKey {
@@ -129,7 +129,7 @@ func unallowPubKey(pubKey string) error {
 	}
 
 	if _, ok := config.WhitelistedPubKeys[pubKey]; ok {
-		return fmt.Errorf("this pubkey is still whitelisted in %s; remove it there and restart haven",
+		return fmt.Errorf("this pubkey is still whitelisted in %s; remove it there and restart sanctum",
 			getEnvString("WHITELISTED_NPUBS_FILE", "your whitelist file"))
 	}
 	return nil
@@ -161,7 +161,7 @@ func listAllowedPubKeys() []pubKeyEntry {
 
 // banEvent stops an event being stored on one relay and drops the copy that is
 // already there. It cannot publish a NIP-09 delete request in the owner's name:
-// haven holds no private key, so the ban in the state file is the only record
+// sanctum holds no private key, so the ban in the state file is the only record
 // there is, and it is what MustNotBeBannedEvent reads.
 func banEvent(relay, id, reason string) error {
 	if err := management.update(func(st *managementState) error {

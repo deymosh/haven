@@ -5,7 +5,7 @@
 db.zip
 dist/
 blacklisted_npubs.json
-haven
+sanctum
 management.json
 management.json.tmp
 metrics.json

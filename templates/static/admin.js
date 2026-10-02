@@ -1,7 +1,7 @@
 "use strict";
 
 //
-// HAVEN relay management client.
+// SANCTUM relay management client.
 //
 // Everything here talks NIP-86 over HTTP: a JSON body POSTed to the relay's own
 // URL with an Authorization header carrying a NIP-98 event signed by a NIP-07
@@ -550,9 +550,9 @@ async function refreshPanel(name, remember) {
 // habitual workflow costs its signature prompts once rather than every reload.
 function rememberPanel(name) {
   try {
-    const open = new Set(JSON.parse(sessionStorage.getItem("haven-admin-panels") || "[]"));
+    const open = new Set(JSON.parse(sessionStorage.getItem("sanctum-admin-panels") || "[]"));
     open.add(name);
-    sessionStorage.setItem("haven-admin-panels", JSON.stringify([...open]));
+    sessionStorage.setItem("sanctum-admin-panels", JSON.stringify([...open]));
   } catch (e) {
     /* private mode, or storage disabled: not worth reporting */
   }
@@ -560,7 +560,7 @@ function rememberPanel(name) {
 
 function rememberedPanels() {
   try {
-    return JSON.parse(sessionStorage.getItem("haven-admin-panels") || "[]");
+    return JSON.parse(sessionStorage.getItem("sanctum-admin-panels") || "[]");
   } catch (e) {
     return [];
   }
@@ -720,7 +720,7 @@ function renderPubkeys(rowsId, entries, mode) {
     if (entry.source === "list") {
       row.appendChild(lockedCell("kind 10084 list", "publish an updated list from a nostr client to remove this"));
     } else if (entry.source === "file") {
-      row.appendChild(lockedCell("npubs file", "edit the file and restart HAVEN"));
+      row.appendChild(lockedCell("npubs file", "edit the file and restart SANCTUM"));
     } else if (entry.source === "owner") {
       row.appendChild(lockedCell("relay owner", "the owner is always allowed"));
     } else {
@@ -2407,7 +2407,7 @@ function renderOrphans(report) {
       action: "files",
       actionLabel: `Delete ${unindexed.toLocaleString()} unindexed files`,
       // this shape is a lost or rolled-back blossom database, not a leak — and
-      // haven's backups carry the index, never the files, so cleaning here after
+      // sanctum's backups carry the index, never the files, so cleaning here after
       // a partial restore would wipe the library
       lost: totalFiles > 0 && unindexed + unindexedRecent > totalFiles / 2,
       lostBody: `${(unindexed + unindexedRecent).toLocaleString()} of ${totalFiles.toLocaleString()} files are unindexed. That is what a lost or rolled back blossom database looks like, not a leak. Restore db/blossom from a backup before cleaning — deleting these would delete almost your whole library.`,

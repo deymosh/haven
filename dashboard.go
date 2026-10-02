@@ -46,7 +46,7 @@ type dayCount struct {
 // corpusStats is what one full pass over one relay's database found.
 //
 // It is the only place the dashboard can learn what is already *stored*, as
-// opposed to what has arrived since haven last restarted, and it costs a walk of
+// opposed to what has arrived since sanctum last restarted, and it costs a walk of
 // every event to produce. Every field is stamped with when, and with whether the
 // walk finished.
 type corpusStats struct {

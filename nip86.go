@@ -39,7 +39,7 @@ const maxReasonRunes = 500
 // callNIP86 without somebody noticing.
 //
 // Not implemented: the roles API (NIP-86 gives roles no permission semantics
-// and haven has no role concept), listeventsneedingmoderation (haven has no
+// and sanctum has no role concept), listeventsneedingmoderation (sanctum has no
 // moderation queue), and grantadmin/revokeadmin (not in the spec at all — only
 // the owner can use this API).
 var nip86SupportedMethods = []string{
@@ -77,7 +77,7 @@ var nip86SupportedMethods = []string{
 	// The event browser. Relay scoped, like the ban and kind methods: the
 	// relayName these are dispatched with comes from the URL path, so a call
 	// signed for /private can only ever read or delete from the private store.
-	// Not NIP-86's listeventsneedingmoderation — haven has no moderation queue
+	// Not NIP-86's listeventsneedingmoderation — sanctum has no moderation queue
 	// and these are not a queue.
 	"listevents",
 	"getevent",

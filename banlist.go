@@ -12,7 +12,7 @@ import (
 )
 
 // KindBanList is the replaceable NIP-51 list the owner publishes to their outbox
-// relay to ban pubkeys from writing to haven. Every "p" tag on it is a banned
+// relay to ban pubkeys from writing to sanctum. Every "p" tag on it is a banned
 // pubkey. Private (NIP-44 encrypted) entries are not supported: the relay has no
 // key to read them with.
 const KindBanList nostr.Kind = 10084

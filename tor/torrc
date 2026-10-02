@@ -3,5 +3,5 @@ DataDirectory /var/lib/tor
 Log notice stdout
 Log notice file /var/lib/tor/tor.log
 
-HiddenServiceDir /var/lib/tor/haven/
-HiddenServicePort 80 haven-relay:3355
+HiddenServiceDir /var/lib/tor/sanctum/
+HiddenServicePort 80 sanctum-relay:3355

@@ -133,7 +133,7 @@ func chainConnectionPolicies(ps ...connectionPolicy) connectionPolicy {
 }
 
 // byValue adapts one of khatru's own event policies, which take the event by
-// value, to the pointer form haven's policies use.
+// value, to the pointer form sanctum's policies use.
 func byValue(p func(context.Context, nostr.Event) (bool, string)) eventPolicy {
 	return func(ctx context.Context, event *nostr.Event) (bool, string) {
 		return p(ctx, *event)
@@ -368,7 +368,7 @@ func initRelays(ctx context.Context) {
 // initBlossom mounts the blob server on the outbox relay.
 func initBlossom(ctx context.Context) {
 	bl := blossom.New(outboxRelay, blobServiceURL())
-	bl.Store = havenBlobIndex{
+	bl.Store = sanctumBlobIndex{
 		EventStoreBlobIndexWrapper: blossom.EventStoreBlobIndexWrapper{Store: blossomDB, ServiceURL: bl.ServiceURL},
 	}
 	bl.StoreBlob = func(_ context.Context, sha256 string, ext string, body []byte) error {
@@ -407,7 +407,7 @@ func initBlossom(ctx context.Context) {
 		// khatru hashes the body after this hook runs, so the only hash here is
 		// the one the client declared in its authorization event. That gives a
 		// well behaved client a clear refusal before it sends anything, while
-		// havenBlobIndex.Keep is what actually enforces the block.
+		// sanctumBlobIndex.Keep is what actually enforces the block.
 		for tag := range event.Tags.FindAll("x") {
 			if len(tag) >= 2 && isBlockedBlob(strings.ToLower(strings.TrimSpace(tag[1]))) {
 				return true, "this blob is blocked by the relay owner", 403

@@ -1,7 +1,7 @@
 #!/bin/sh
 
-if [ "$HAVEN_IMPORT_FLAG" = "true" ]; then
-  exec /app/haven import
+if [ "$IMPORT_FLAG" = "true" ]; then
+  exec /app/sanctum import
 else
-  exec /app/haven
+  exec /app/sanctum
 fi

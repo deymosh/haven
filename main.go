@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/afero"
 	"golang.org/x/net/proxy"
 
-	"github.com/barrydeen/haven/pkg/wot"
+	"github.com/deymosh/sanctum/pkg/wot"
 )
 
 var (
@@ -167,8 +167,8 @@ func main() {
 
 	flag.Parse()
 
-	log.Println("🚀 HAVEN", config.RelayVersion, "is booting up")
-	defer log.Println("🔌 HAVEN is shutting down")
+	log.Println("🚀 SANCTUM", config.RelayVersion, "is booting up")
+	defer log.Println("🔌 SANCTUM is shutting down")
 	log.Println("👥 Number of whitelisted pubkeys:", len(whitelistedPubKeySet()))
 	log.Println("🚷 Number of blacklisted pubkeys:", len(config.BlacklistedPubKeys))
 
@@ -215,9 +215,9 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Println("haven is a personal nostr relay.")
+	fmt.Println("sanctum is a personal nostr relay.")
 	fmt.Println()
-	fmt.Println("usage: haven [command]")
+	fmt.Println("usage: sanctum [command]")
 	fmt.Println()
 	fmt.Println("commands:")
 	fmt.Println("  backup  - backup the database")
@@ -227,13 +227,13 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("if no command is provided, the relay starts by default.")
 	fmt.Println()
-	fmt.Println("run 'haven [command] --help' for more information on a command.")
+	fmt.Println("run 'sanctum [command] --help' for more information on a command.")
 }
 
 func dynamicRelayHandler(w http.ResponseWriter, r *http.Request) {
 	relay, relayName, exact := relayForPath(r.URL.Path)
 
-	// NIP-86 is answered by haven rather than by khatru: khatru's handler
+	// NIP-86 is answered by sanctum rather than by khatru: khatru's handler
 	// reports auth failures as HTTP 200 where the NIP asks for a 401, does not
 	// check the auth event's kind or method tag, and has no way to serve the
 	// console's own methods (its Generic fallback is unreachable, because

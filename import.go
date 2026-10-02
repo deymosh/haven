@@ -11,7 +11,7 @@ import (
 
 	"fiatjaf.com/nostr"
 
-	"github.com/barrydeen/haven/pkg/wot"
+	"github.com/deymosh/sanctum/pkg/wot"
 )
 
 const layout = "2006-01-02"

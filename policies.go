@@ -11,7 +11,7 @@ import (
 	"fiatjaf.com/nostr/eventstore"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip11"
-	"github.com/barrydeen/haven/pkg/wot"
+	"github.com/deymosh/sanctum/pkg/wot"
 )
 
 func MustBeWhitelistedToQuery(ctx context.Context, _ nostr.Filter) (bool, string) {

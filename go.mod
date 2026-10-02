@@ -1,4 +1,4 @@
-module github.com/barrydeen/haven
+module github.com/deymosh/sanctum
 
 go 1.25
 

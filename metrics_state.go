@@ -46,7 +46,7 @@ const metricsFoldInterval = 15 * time.Second
 //
 // The counters are a map keyed by name rather than a positional array: a
 // positional file would silently re-label every historical bucket the first time
-// somebody inserted a counter in the middle of the enum. This way a name haven no
+// somebody inserted a counter in the middle of the enum. This way a name sanctum no
 // longer knows is dropped on load instead of shifting everything after it.
 //
 // Zero counters are omitted, in both directions: a counter that is not there is
@@ -171,7 +171,7 @@ func bucketAt(buckets []metricsBucket, start int64) ([]metricsBucket, int) {
 // subtraction per counter per fold.
 //
 // The elapsed wall time is charged to uptime_seconds, which is what lets a reader
-// tell an idle hour apart from an hour haven was not running. Without it a
+// tell an idle hour apart from an hour sanctum was not running. Without it a
 // restart is indistinguishable from a quiet night and the chart draws a confident
 // zero over a blackout.
 func (s *metricsStore) fold(now time.Time) {
@@ -335,7 +335,7 @@ func (s *metricsStore) persist() {
 // loadMetricsStore reads the history a previous run left behind.
 //
 // A missing file is a first boot. A file that cannot be read, cannot be parsed,
-// or was written by a newer haven leaves the store FROZEN: counting continues in
+// or was written by a newer sanctum leaves the store FROZEN: counting continues in
 // memory and the dashboard keeps working, but nothing is written to that path
 // again. The alternative is overwriting a file the operator may have been about
 // to look at, and history is the one thing here that cannot be recreated. Every
@@ -367,7 +367,7 @@ func loadMetricsStore() {
 	}
 	if state.Version > metricsStateVersion {
 		metrics.frozen = true
-		slog.Error("🚫 the analytics file was written by a newer haven, so nothing will be written to it",
+		slog.Error("🚫 the analytics file was written by a newer sanctum, so nothing will be written to it",
 			"path", metrics.path, "file", state.Version, "supported", metricsStateVersion)
 		return
 	}

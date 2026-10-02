@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/barrydeen/haven/internal/cloud"
+	"github.com/deymosh/sanctum/internal/cloud"
 )
 
 func runBackup(ctx context.Context) {
@@ -55,7 +55,7 @@ func runBackup(ctx context.Context) {
 	}
 
 	parsedArgs := backupCmd.Args()
-	fileName := "haven_backup.zip"
+	fileName := "sanctum_backup.zip"
 	if len(parsedArgs) > 0 {
 		fileName = parsedArgs[0]
 	}
@@ -134,7 +134,7 @@ func runRestore(ctx context.Context) {
 	}
 
 	parsedArgs := restoreCmd.Args()
-	fileName := "haven_backup.zip"
+	fileName := "sanctum_backup.zip"
 	if len(parsedArgs) > 0 {
 		fileName = parsedArgs[0]
 	}
@@ -187,7 +187,7 @@ func startPeriodicCloudBackups(ctx context.Context) {
 	ticker := time.NewTicker(time.Duration(config.BackupIntervalHours) * time.Hour)
 	defer ticker.Stop()
 
-	zipFileName := "haven_backup.zip"
+	zipFileName := "sanctum_backup.zip"
 	for {
 		select {
 		case <-ctx.Done():

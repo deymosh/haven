@@ -254,7 +254,7 @@ func instrument(relay *khatru.Relay, name string) {
 		return false, ""
 	}
 
-	// COUNT has its own hook and haven installs no policy on it, so this is the
+	// COUNT has its own hook and sanctum installs no policy on it, so this is the
 	// only visibility there is into NIP-45 traffic.
 	onCount := relay.OnCount
 	relay.OnCount = func(ctx context.Context, filter nostr.Filter) (bool, string) {
@@ -268,7 +268,7 @@ func instrument(relay *khatru.Relay, name string) {
 
 // instrumentBlossom counts media traffic. Blossom hangs off the outbox relay
 // alone, so all of this lands in the outbox relay's counters. Like instrument,
-// it must run after haven's own blossom hooks are installed.
+// it must run after sanctum's own blossom hooks are installed.
 func instrumentBlossom(bl *blossom.BlossomServer, name string) {
 	if !config.AnalyticsEnabled {
 		return

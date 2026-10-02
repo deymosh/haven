@@ -83,7 +83,7 @@ type Config struct {
 	S3Config                             *S3Config           `json:"s3_config"`
 }
 
-const relaySoftware = "https://github.com/deymosh/haven/tree/deploy/docker-tor"
+const relaySoftware = "https://github.com/deymosh/sanctum"
 
 func loadConfig() Config {
 	_ = godotenv.Load(envFile())
@@ -99,7 +99,7 @@ func loadConfig() Config {
 		RelayBindAddress:                     getEnvString("RELAY_BIND_ADDRESS", "0.0.0.0"),
 		RelaySoftware:                        relaySoftware,
 		RelayVersion:                         getVersion(),
-		UserAgent:                            fmt.Sprintf("Haven/%s (+%s)", getVersion(), relaySoftware),
+		UserAgent:                            fmt.Sprintf("Sanctum/%s (+%s)", getVersion(), relaySoftware),
 		PrivateRelayName:                     getEnv("PRIVATE_RELAY_NAME"),
 		PrivateRelayNpub:                     getEnv("PRIVATE_RELAY_NPUB"),
 		PrivateRelayDescription:              getEnv("PRIVATE_RELAY_DESCRIPTION"),
@@ -129,7 +129,7 @@ func loadConfig() Config {
 		WotRefreshInterval:                   getEnvDuration("WOT_REFRESH_INTERVAL", 24*time.Hour),
 		WhitelistedPubKeys:                   getNpubsFromFile(getEnvString("WHITELISTED_NPUBS_FILE", "")),
 		BlacklistedPubKeys:                   getNpubsFromFile(getEnvString("BLACKLISTED_NPUBS_FILE", "")),
-		LogLevel:                             getEnvString("HAVEN_LOG_LEVEL", "INFO"),
+		LogLevel:                             getEnvString("LOG_LEVEL", "INFO"),
 		BlastrRelays:                         getRelayListFromFile(getEnv("BLASTR_RELAYS_FILE")),
 		BlastrTimeoutSeconds:                 getEnvInt("BLASTR_TIMEOUT_SECONDS", 5),
 		ProxyURL:                             getEnvString("PROXY_URL", ""),
@@ -155,7 +155,15 @@ func loadConfig() Config {
 
 }
 
+// buildVersion is stamped in at build time with -ldflags
+// "-X main.buildVersion=…". Local builds leave it empty and getVersion falls
+// back to the module build info.
+var buildVersion string
+
 func getVersion() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "(devel)"
@@ -352,11 +360,11 @@ func clampAnalyticsConfig(cfg *Config) {
 }
 
 var art = `
-██╗  ██╗ █████╗ ██╗   ██╗███████╗███╗   ██╗
-██║  ██║██╔══██╗██║   ██║██╔════╝████╗  ██║
-███████║███████║██║   ██║█████╗  ██╔██╗ ██║
-██╔══██║██╔══██║╚██╗ ██╔╝██╔══╝  ██║╚██╗██║
-██║  ██║██║  ██║ ╚████╔╝ ███████╗██║ ╚████║
-╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝
-HIGH AVAILABILITY VAULT FOR EVENTS ON NOSTR
+███████╗ █████╗ ███╗   ██╗ ██████╗ █████████╗██╗   ██╗███╗   ███╗
+██╔════╝██╔══██╗████╗  ██║██╔════╝╚══██╔════╝██║   ██║████╗ ████║
+███████║███████║██╔██╗ ██║██║        ██║   ██║   ██║██╔████╔██║
+╚════██║██╔══██║██║╚██╗██║██║        ██║   ██║   ██║██║╚██╔╝██║
+███████║██║  ██║██║ ╚████║╚██████╗   ██║   ╚██████╔╝██║ ╚═╝ ██║
+╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
+A SOVEREIGN, TOR-FIRST PERSONAL NOSTR RELAY
 	`

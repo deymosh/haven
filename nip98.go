@@ -89,7 +89,7 @@ func verifyNIP98(r *http.Request, body []byte, serviceURL string) (nostr.PubKey,
 }
 
 // sameServiceURL reports whether a NIP-98 u tag addresses this relay. The
-// ws/wss distinction is dropped on purpose: haven sits behind a TLS terminating
+// ws/wss distinction is dropped on purpose: sanctum sits behind a TLS terminating
 // proxy and cannot know whether the client spoke http or https, and getHTTPScheme
 // assumes https for anything that is not an onion address, so a plain HTTP
 // deployment would otherwise never match. Host, port and path are what bind the

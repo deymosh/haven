@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/afero"
 )
 
-// The four relays haven serves. These are keyed the same way as the dbs map in
+// The four relays sanctum serves. These are keyed the same way as the dbs map in
 // init.go, so a NIP-86 request addressed to one of them reaches its database
 // without a second lookup table.
 const (
@@ -26,7 +26,7 @@ const (
 	relayOutbox  = "outbox"
 )
 
-// managementStateVersion goes into the state file so a future haven can tell
+// managementStateVersion goes into the state file so a future sanctum can tell
 // what it is reading.
 const managementStateVersion = 1
 
@@ -50,8 +50,8 @@ type managementState struct {
 }
 
 // relayState is the per-relay slice of the API. A NIP-86 request is addressed
-// to a URL and haven serves four relays on four paths, so a kind rule or an
-// event ban belongs to the relay it was sent to, not to haven as a whole.
+// to a URL and sanctum serves four relays on four paths, so a kind rule or an
+// event ban belongs to the relay it was sent to, not to sanctum as a whole.
 type relayState struct {
 	Name            string            `json:"name,omitempty"`
 	Description     string            `json:"description,omitempty"`
@@ -178,7 +178,7 @@ func (s *managementStore) get() *managementState {
 // could not be read at startup. Writing would overwrite whatever is in there,
 // which is exactly what somebody with a broken file does not want.
 func (s *managementStore) errManagementFrozen() error {
-	return fmt.Errorf("the management state file %s could not be read at startup; fix or remove it and restart haven", s.path)
+	return fmt.Errorf("the management state file %s could not be read at startup; fix or remove it and restart sanctum", s.path)
 }
 
 // update applies mutate to a copy of the current state and saves it before it
@@ -243,7 +243,7 @@ func (s *managementStore) persist(state *managementState) error {
 // loadManagementStore reads the state the NIP-86 API saved on a previous run.
 // A missing file is the normal first boot. A file that cannot be read or parsed
 // freezes the API instead of starting empty: whatever is in there was either
-// hand edited or written by a newer haven, and the next write would destroy it.
+// hand edited or written by a newer sanctum, and the next write would destroy it.
 // The relay keeps serving either way — moderation state going bad is not a
 // reason to refuse to start.
 func loadManagementStore() {
@@ -291,7 +291,7 @@ func loadManagementStore() {
 
 // isBanned reports whether a pubkey is banned, by either route: the kind 10084
 // list the owner publishes, or the NIP-86 API. The list is read-only to the
-// API — haven has no key to sign a replacement with.
+// API — sanctum has no key to sign a replacement with.
 func isBanned(pubKey string) bool {
 	if bannedPubKeys.has(pubKey) {
 		return true

@@ -888,7 +888,7 @@ async function notesDelete(ids) {
     // the honest description of delete-only. Anything vaguer would read as a
     // takedown, and this is not one.
     body:
-      "The stored copies are removed from this relay's database. Nothing is published — HAVEN holds no key, so no delete request goes out and other relays keep their copies. The author, or anyone else holding these events, can publish them here again. To keep an event out for good, ban it under Moderation → Banned events.",
+      "The stored copies are removed from this relay's database. Nothing is published — SANCTUM holds no key, so no delete request goes out and other relays keep their copies. The author, or anyone else holding these events, can publish them here again. To keep an event out for good, ban it under Moderation → Banned events.",
     detail: detail.join(" · "),
     danger: `Delete ${rows.length.toLocaleString()}`,
     requireTyped: rows.length > NOTES_TYPED_GUARD ? "DELETE" : "",

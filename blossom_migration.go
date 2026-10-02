@@ -10,7 +10,7 @@ import (
 )
 
 // migrateBlossomMetadata moves the owner's blob descriptors out of the outbox
-// database, where older versions of haven kept them, and into the dedicated
+// database, where older versions of sanctum kept them, and into the dedicated
 // blossom one.
 //
 // It walks the outbox database with the paged reader rather than the blob
