@@ -190,12 +190,18 @@ func getS3Config() *S3Config {
 func getRelayListFromFile(filePath string) []string {
 	file, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Fatalf("Failed to read file: %s", err)
+		// a missing or unreadable relay list should cost the relay its
+		// outbox reach, not its uptime: warn and carry on with nothing
+		slog.Warn("⚠️ could not read relay list, continuing without it",
+			"file", filePath, "error", err)
+		return nil
 	}
 
 	var relayList []string
 	if err := json.Unmarshal(file, &relayList); err != nil {
-		log.Fatalf("Failed to parse JSON: %s", err)
+		slog.Warn("⚠️ could not parse relay list, continuing without it",
+			"file", filePath, "error", err)
+		return nil
 	}
 
 	for i, relay := range relayList {
@@ -220,17 +226,30 @@ func getNpubsFromFile(filePath string) map[string]struct{} {
 	}
 	file, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Fatalf("Failed to read file: %s", err)
+		// same contract as the relay lists: a set-but-missing npub file is a
+		// warning, not a crash loop. An empty set means the owner only,
+		// which fails closed rather than open.
+		slog.Warn("⚠️ could not read npub file, continuing without it",
+			"file", filePath, "error", err)
+		return pubKeys
 	}
 
 	var npubs []string
 	if err := json.Unmarshal(file, &npubs); err != nil {
-		log.Fatalf("Failed to parse JSON: %s", err)
+		slog.Warn("⚠️ could not parse npub file, continuing without it",
+			"file", filePath, "error", err)
+		return pubKeys
 	}
 
 	for _, npub := range npubs {
 		npub = strings.TrimSpace(npub)
-		pubKeys[nPubToPubkey(filePath, npub)] = struct{}{}
+		pubkey, err := decodeNpub(npub)
+		if err != nil {
+			slog.Warn("⚠️ skipping unreadable npub in list",
+				"file", filePath, "npub", npub, "error", err)
+			continue
+		}
+		pubKeys[pubkey] = struct{}{}
 	}
 	return pubKeys
 }
@@ -309,24 +328,34 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 // the source of the value (an env var name or file path) so a mistyped npub
 // produces an actionable error instead of a status-2 panic crash-loop.
 func nPubToPubkey(label, nPub string) string {
+	pubkey, err := decodeNpub(nPub)
+	if err != nil {
+		log.Fatalf("invalid npub for %s: %v", label, err)
+	}
+	return pubkey
+}
+
+// decodeNpub decodes a bech32 npub into its hex public key. Callers decide
+// how fatal a failure is: owner npubs abort startup, list entries are
+// skipped with a warning.
+func decodeNpub(nPub string) (string, error) {
 	prefix, v, err := nip19.Decode(nPub)
 	if err != nil {
 		if strings.HasPrefix(nPub, "npub1") {
-			log.Fatalf("invalid npub for %s: %q could not be decoded (%v)", label, nPub, err)
+			return "", fmt.Errorf("%q could not be decoded (%w)", nPub, err)
 		}
-		log.Fatalf("invalid npub for %s: value could not be decoded as an npub (%v)", label, err)
+		return "", fmt.Errorf("value could not be decoded as an npub (%w)", err)
 	}
 	if prefix != "npub" {
-		log.Fatalf("invalid npub for %s: expected an npub, got a %q", label, prefix)
+		return "", fmt.Errorf("expected an npub, got a %q", prefix)
 	}
 	switch value := v.(type) {
 	case string:
-		return value
+		return value, nil
 	case nostr.PubKey:
-		return value.Hex()
+		return value.Hex(), nil
 	default:
-		log.Fatalf("invalid npub for %s: %q did not decode to a public key", label, nPub)
-		return ""
+		return "", fmt.Errorf("%q did not decode to a public key", nPub)
 	}
 }
 
