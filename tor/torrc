@@ -1,9 +1,12 @@
 # 0.0.0.0 is safe here: the socks port is only reachable inside the compose
 # network, no ports are published to the host
 SocksPort 0.0.0.0:9050
-DataDirectory /var/lib/tor
-Log notice stdout
-Log notice file /var/lib/tor/tor.log
 
-HiddenServiceDir /var/lib/tor/sanctum/
+# the tor image's documented data directory; ./tor/data on the host
+DataDirectory /data/.tor
+
+Log notice stdout
+Log notice file /data/.tor/tor.log
+
+HiddenServiceDir /data/.tor/sanctum/
 HiddenServicePort 80 sanctum-relay:3355

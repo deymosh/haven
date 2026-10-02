@@ -4,23 +4,16 @@ services:
   sanctum-tor:
     image: ghcr.io/deymosh/tor:latest
     container_name: sanctum-tor
-    # tor refuses to run unless its data directory is owned by toruser and
-    # mode 0700, and a bind mount arrives root-owned on most hosts. Start as
-    # root, fix the mount once, then drop to toruser for tor itself.
-    user: "0:0"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - chown 1000:1000 /var/lib/tor && chmod 700 /var/lib/tor && exec setpriv --reuid 1000 --regid 1000 --clear-groups tor -f /etc/tor/torrc
     restart: always
+    # the image bundles bash and timeout for exactly this healthcheck
     healthcheck:
-      test: ["CMD", "bash", "-c", "grep -q 'Bootstrapped 100%' /var/lib/tor/tor.log"]
-      interval: 5s
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9050"]
+      interval: 30s
       timeout: 5s
-      retries: 30
+      retries: 3
     volumes:
       - ./tor/torrc:/etc/tor/torrc:ro
-      - ./tor/data:/var/lib/tor
+      - ./tor/data:/data/.tor
     networks:
       - sanctum-network
 
@@ -31,6 +24,10 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: sanctum-relay
+    # loopback only: reachable from the host (browser, reverse proxy) but not
+    # exposed publicly; the tor hidden service needs no host port at all
+    ports:
+      - "127.0.0.1:3355:3355"
     volumes:
       - ./.env:/app/.env
       # everything the relay writes lives under ./data
