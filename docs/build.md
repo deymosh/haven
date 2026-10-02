@@ -1,6 +1,6 @@
-# Building Haven
+# Building Sanctum
 
-This document provides instructions for building the Haven relay from source.
+This document provides instructions for building the Sanctum relay from source.
 
 ## Prerequisites
 
@@ -33,8 +33,8 @@ sudo apt install build-essential`
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/barrydeen/haven.git
-cd haven
+git clone https://github.com/deymosh/sanctum.git
+cd sanctum
 ```
 
 ### 2. Build the project

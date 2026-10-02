@@ -1,6 +1,6 @@
 # Web of Trust
 
-To protect your Inbox and Chat relays from spam and unwanted messages, Haven implements a Web of Trust (WoT) system.
+To protect your Inbox and Chat relays from spam and unwanted messages, Sanctum implements a Web of Trust (WoT) system.
 This allows you to control who can write to these relays based on your follow list.
 
 Note that this is different and complementary to [whitelisting / blacklisting](access-control.md) which allows you to 

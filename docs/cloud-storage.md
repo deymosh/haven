@@ -14,7 +14,7 @@ S3_ACCESS_KEY="AKIAIOSFODNN7EXAMPLE"
 S3_SECRET_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 S3_ENDPOINT="s3.us-east-1.amazonaws.com"
 S3_REGION="us-east-1"
-S3_BUCKET_NAME="haven_backup"
+S3_BUCKET_NAME="sanctum_backup"
 ```
 
 ### GCP Cloud Storage
@@ -30,7 +30,7 @@ S3_ACCESS_KEY_ID="GOOGXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 S3_SECRET_KEY="Yyy+YYY0/yYYYYyyyy0+YyyYyyYyyYyyyyYyyYyy"
 S3_ENDPOINT="storage.googleapis.com"
 S3_REGION=""
-S3_BUCKET_NAME="haven_backup"
+S3_BUCKET_NAME="sanctum_backup"
 ```
 
 ### DigitalOcean Spaces
@@ -58,7 +58,7 @@ S3_ACCESS_KEY_ID="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 S3_SECRET_KEY="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 S3_ENDPOINT="<accountid>.r2.cloudflarestorage.com"
 S3_REGION=""
-S3_BUCKET_NAME="haven_backup"
+S3_BUCKET_NAME="sanctum_backup"
 ```
 
 > [!WARNING]

@@ -2,22 +2,22 @@
 
 ### Corrected version
 
-Haven provides tools for backing up and restoring your relay data. This is essential for several use cases:
+Sanctum provides tools for backing up and restoring your relay data. This is essential for several use cases:
 
 * **Disaster Recovery**: Protect your data against hardware failure or accidental deletion.
 * **Switching Databases**: Move your data when migrating to a new server or database provider, or out of a BadgerDB
-  database written by an older version of Haven.
-* **Importing/Exporting Data**: Move data between Haven and other Nostr relays.
+  database written by an older version of Sanctum.
+* **Importing/Exporting Data**: Move data between Sanctum and other Nostr relays.
 
 > [!IMPORTANT]
-> When importing data from external JSONL files, Haven will trust all events contained within the file and will not try
+> When importing data from external JSONL files, Sanctum will trust all events contained within the file and will not try
 > to validate or split the data. For example, it will allow notes from other people to be imported into your Outbox 
 > relay, bypassing [WoT](wot.md) checks and other safeguards. This is intentional to allow for maximum flexibility when 
 > importing data, but it also means that you should be careful when importing data from untrusted sources.
 
 > [!TIP]
 > For simple imports from external relays, you may prefer to use the
-> [`./haven import`](../README.md#8-import-your-old-notes-optional) command instead.
+> [`./sanctum import`](../README.md#8-import-your-old-notes-optional) command instead.
 
 ---
 
@@ -26,80 +26,80 @@ Haven provides tools for backing up and restoring your relay data. This is essen
 If you want to back up all relay data to a JSONL zip file, run the following command:
 
 ```bash
-./haven backup
+./sanctum backup
 ```
 
-This will create a `haven_backup.zip` file in your current directory. You can specify a different filename:
+This will create a `sanctum_backup.zip` file in your current directory. You can specify a different filename:
 
 ```bash
-./haven backup mybackup.zip
+./sanctum backup mybackup.zip
 ```
 
 If you want to upload the backup to your cloud provider after creation, use the `--to-cloud` flag:
 
 ```bash
-./haven backup --to-cloud
+./sanctum backup --to-cloud
 ```
 
 You can also specify a filename with `--to-cloud`:
 
 ```bash
-./haven backup --to-cloud mybackup.zip
+./sanctum backup --to-cloud mybackup.zip
 ```
 
 To back up a specific relay to a JSONL file:
 
 ```bash
-./haven backup --relay outbox outbox.jsonl
+./sanctum backup --relay outbox outbox.jsonl
 ```
 
 And you can also upload a specific relay backup to the cloud:
 
 ```bash
-./haven backup --relay outbox --to-cloud outbox.jsonl
+./sanctum backup --relay outbox --to-cloud outbox.jsonl
 ```
 
 ## Manual Restore
 
-To restore data from a `haven_backup.zip` file, run:
+To restore data from a `sanctum_backup.zip` file, run:
 
 ```bash
-./haven restore
+./sanctum restore
 ```
 
-This will look for a `haven_backup.zip` file in your current directory. You can specify a different filename:
+This will look for a `sanctum_backup.zip` file in your current directory. You can specify a different filename:
 
 ```bash
-./haven restore mybackup.zip
+./sanctum restore mybackup.zip
 ```
 
 To restore from the cloud using the default name:
 
 ```bash
-./haven restore --from-cloud
+./sanctum restore --from-cloud
 ```
 
 You can also specify a filename to restore from the cloud:
 
 ```bash
-./haven restore --from-cloud mybackup.zip
+./sanctum restore --from-cloud mybackup.zip
 ```
 
 To restore a specific relay from a JSONL file:
 
 ```bash
-./haven restore --relay outbox outbox.jsonl
+./sanctum restore --relay outbox outbox.jsonl
 ```
 
 And to restore a specific relay from a JSONL file in the cloud:
 
 ```bash
-./haven restore --relay outbox --from-cloud outbox.jsonl
+./sanctum restore --relay outbox --from-cloud outbox.jsonl
 ```
 
 ## Periodic Cloud Backups
 
-Haven can periodically back up your data to a cloud provider of your choice.
+Sanctum can periodically back up your data to a cloud provider of your choice.
 
 To back up your database to S3 compatible storage such as [AWS S3](https://aws.amazon.com/s3/), 
 [GCP Cloud Storage](https://cloud.google.com/storage), 

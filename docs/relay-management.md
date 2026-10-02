@@ -1,6 +1,6 @@
 # Relay Management API (NIP-86) and the admin page
 
-Haven implements [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md), the relay management API, so
+Sanctum implements [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md), the relay management API, so
 the owner can ban a pubkey, drop a stored event, block an address or rename a relay without a shell on the box. It
 ships with a web page at `/admin` that drives the API from a nostr browser extension.
 
@@ -8,7 +8,7 @@ Only the relay owner (`OWNER_NPUB`) can use it. There is no way to delegate acce
 
 ## Endpoints
 
-NIP-86 lives on the same URL as the relay's websocket, so Haven has four of them — one per relay, and a call applies
+NIP-86 lives on the same URL as the relay's websocket, so Sanctum has four of them — one per relay, and a call applies
 to the relay it was sent to:
 
 | URL | Relay |
@@ -78,8 +78,8 @@ The body has to be byte-identical between the hash and the request, or the `payl
 | `dashboard` | all relays | not part of NIP-86; see [Dashboard](#dashboard) |
 | `stats` | one relay | not part of NIP-86; see below |
 
-Not implemented: the roles API (NIP-86 gives roles no permission semantics and Haven has no role concept),
-`listeventsneedingmoderation` (Haven has no moderation queue), and `grantadmin`/`revokeadmin` (never part of the
+Not implemented: the roles API (NIP-86 gives roles no permission semantics and Sanctum has no role concept),
+`listeventsneedingmoderation` (Sanctum has no moderation queue), and `grantadmin`/`revokeadmin` (never part of the
 spec).
 
 ## Where the state lives
@@ -87,22 +87,22 @@ spec).
 Everything the API changes is written to `management.json` — the path is `MANAGEMENT_STATE_FILE`, and the file is
 created on first use. Do not edit it while the relay is running.
 
-If the file cannot be read or parsed at startup, Haven logs the reason, keeps serving, and makes the management API
+If the file cannot be read or parsed at startup, Sanctum logs the reason, keeps serving, and makes the management API
 **read-only** until it is fixed. It will not overwrite a file it could not understand.
 
 Set `MANAGEMENT_API_ENABLED=false` to make the endpoint and the admin page unreachable altogether.
 
 ## Two sources of bans, one of which is read-only
 
-Haven has two ban lists and they are unioned: the one this API writes, and the kind `10084` list the owner publishes
+Sanctum has two ban lists and they are unioned: the one this API writes, and the kind `10084` list the owner publishes
 (see [access control](access-control.md#banning-users)). `listbannedpubkeys` reports a `source` on every entry
 (`"api"`, `"list"`, `"file"` or `"owner"`) so you can tell them apart.
 
-**The API cannot lift a ban that came from your kind 10084 list.** Haven holds no private key — only `OWNER_NPUB` —
+**The API cannot lift a ban that came from your kind 10084 list.** Sanctum holds no private key — only `OWNER_NPUB` —
 so it cannot sign a replacement list. `unbanpubkey` on such a pubkey clears the relay's own record and then tells you
 the ban is still standing; publish an updated list from a nostr client to remove it.
 
-The same applies to `unallowpubkey` against a pubkey in `WHITELISTED_NPUBS_FILE`: Haven will not rewrite a file you
+The same applies to `unallowpubkey` against a pubkey in `WHITELISTED_NPUBS_FILE`: Sanctum will not rewrite a file you
 maintain by hand.
 
 The API refuses to ban the owner, to un-allow the owner, and to block a loopback or private address — behind a
@@ -112,7 +112,7 @@ relay offline for everybody.
 ## Banning events
 
 `banevent` deletes the stored copy from that relay's database and records the id, so re-publishing it is refused and
-the import paths skip it. It does **not** publish a NIP-09 delete request: Haven has no key to sign one with. Other
+the import paths skip it. It does **not** publish a NIP-09 delete request: Sanctum has no key to sign one with. Other
 relays keep their copies, and nothing is blasted onwards.
 
 `allowevent` is the inverse of `banevent`, not a restore. It lifts the block on re-publishing; the deleted copy does
@@ -138,12 +138,12 @@ blossom blobs.
 
 Blocking is only as trustworthy as your reverse proxy's `X-Forwarded-For` handling. A proxy that *appends* to the
 header lets a client prepend a forged address and win — configure yours to replace it (see the reverse proxy section
-in the [README](../README.md#6-set-up-a-reverse-proxy-optional)). This already affects Haven's rate limiters, so it
+in the [README](../README.md#6-set-up-a-reverse-proxy-optional)). This already affects Sanctum's rate limiters, so it
 is worth getting right regardless.
 
 ## `stats`
 
-Not part of NIP-86 — Haven defines the shape. It reports the relay, version, uptime, per-database event counts and
+Not part of NIP-86 — Sanctum defines the shape. It reports the relay, version, uptime, per-database event counts and
 the size of each list, counted per source rather than summed. Event counts are a full scan of every database, so
 they are cached for a minute; `events_counted_at` says how stale they are.
 
@@ -218,7 +218,7 @@ not be read in full — a file that looks unindexed may only look that way becau
 entry pointing at it was unreadable.
 
 > [!IMPORTANT]
-> Haven's backups contain the blob **index**, not the blob **files**. Restoring a
+> Sanctum's backups contain the blob **index**, not the blob **files**. Restoring a
 > backup onto an empty blossom directory leaves every entry pointing at a missing
 > file; restoring the files without `db/blossom` leaves every file unindexed. The
 > admin page refuses to offer a cleanup when more than half the files are unindexed,
@@ -274,7 +274,7 @@ the gap, which would leak your interest in a pubkey to whatever relay was asked.
 **`search` is a substring scan, not NIP-50.** Neither event store implements NIP-50 —
 worse, both answer a filter carrying a search string by closing the channel with
 nothing in it, so passing one through would report an empty result as a real one.
-Haven scans for the substring itself, over `content`, bounded by `scan_budget`
+Sanctum scans for the substring itself, over `content`, bounded by `scan_budget`
 (20,000 events). `scanned` and `complete` are how you can tell it looked at
 everything.
 
@@ -287,7 +287,7 @@ out.
 `deleteevent` and `deleteevents` (up to 500 ids per call) remove the stored copies
 from that relay's database. That is all they do:
 
-- Nothing is published. Haven holds no private key, so it cannot sign a NIP-09
+- Nothing is published. Sanctum holds no private key, so it cannot sign a NIP-09
   deletion on your behalf, and other relays keep their copies.
 - The author — or anyone else holding the event — can publish it to this relay again,
   and an import or a JSONL restore will put it straight back.
@@ -322,13 +322,13 @@ Counters come from a wrapper around each relay's hooks: it counts what was offer
 runs the relay's policies, and counts what survived all of them, and the difference is
 the rejections. They are folded into hourly buckets every fifteen
 seconds and written to `ANALYTICS_STATE_FILE` every `ANALYTICS_FLUSH_MINUTES` and on
-every hour boundary. If that file cannot be read at startup, Haven keeps counting in
+every hour boundary. If that file cannot be read at startup, Sanctum keeps counting in
 memory, keeps serving the dashboard, and **stops writing** — `analytics.persisted`
 goes false and the page says so, because history is the one thing here that cannot be
 recreated.
 
 `uptime_seconds` is counted per bucket for exactly one reason: it is what lets you
-tell an idle hour apart from an hour Haven was not running.
+tell an idle hour apart from an hour Sanctum was not running.
 
 The kind mix, top authors and stored byte totals need a full walk of every database,
 which the backends run without ever checking for cancellation — so they are computed
